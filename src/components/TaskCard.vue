@@ -32,7 +32,7 @@ const pendingQuestionCount = computed(() =>
   props.task.pendingQuestions?.filter(q => q.status === 'pending').length || 0
 )
 
-const workspace = getWorkspace(props.task.workspaceId)
+const workspace = computed(() => getWorkspace(props.task.workspaceId))
 
 function priorityColor(p: string): string {
   const map: Record<string, string> = {

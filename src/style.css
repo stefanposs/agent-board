@@ -1137,6 +1137,8 @@ body {
 .onboarding-text {
   font-size: 14px;
   color: var(--text-secondary);
+  margin: 0 0 24px;
+  line-height: 1.5;
 }
 
 .modal-logo {
@@ -1145,9 +1147,6 @@ body {
   object-fit: contain;
   vertical-align: middle;
   margin-right: 4px;
-}
-  margin: 0 0 24px;
-  line-height: 1.5;
 }
 
 .onboarding-steps {
@@ -2119,7 +2118,7 @@ body {
   padding: 12px 14px;
   border: 2px solid var(--border-color);
   border-radius: 10px;
-  background: var(--card-bg);
+  background: var(--bg-card);
   cursor: pointer;
   min-width: 100px;
   flex: 1;

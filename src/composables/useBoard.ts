@@ -410,8 +410,10 @@ function useBoard() {
         maxContextTokens: a.maxContextTokens,
         requestCount: 0,
         estimatedCostUsd: 0,
-      },      skills: a.skills || [],
-      languages: a.languages || [],    }))
+      },
+      skills: a.skills || [],
+      languages: a.languages || [],
+    }))
     addActivity(`🤖 Agents updated — ${agentConfigs.length} agents loaded`, 'human_action')
   }
 

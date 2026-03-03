@@ -63,7 +63,7 @@ if (ext.isWebview.value) {
 
         // Parse structured decision from LLM response and act on it
         const decision = parseAgentDecision(buffer.content)
-        console.log('[AgentBoard] parseAgentDecision result:', { agentId: msg.agentId, taskId: effectiveTaskId, decision, contentLength: buffer.content.length, contentEnd: buffer.content.slice(-300) })
+
         if (decision && effectiveTaskId) {
           // Small delay to let UI update before triggering next action
           setTimeout(() => handleAgentDecision(msg.agentId, effectiveTaskId, decision), 1500)
@@ -180,7 +180,7 @@ if (ext.isWebview.value) {
 // ─── Auto-branch + Auto-agent on task move ──────────────────
 
 board.onTaskMoved((taskId, fromStage, toStage, task) => {
-  console.log('[AgentBoard] onTaskMoved fired:', { taskId, fromStage, toStage, title: task.title })
+
   try {
     const toLabel = wf.getStageConfig(toStage)?.label ?? toStage
     board.addToast(`⚙️ ${task.title}: ${fromStage} → ${toLabel}`, 'info')
@@ -352,8 +352,8 @@ function handleAgentDecision(agentId: string, taskId: string, decision: AgentDec
         const targetLabel = wf.getStageConfig(approvalTransition.to)?.label ?? approvalTransition.to
         board.addComment(taskId, `✅ **Review approved**\n\n_${decision.reason}_`, agentId)
         board.addToast(`✅ ${agentName}: Approved → ${targetLabel}`, 'success')
-        task.approvalStatus = 'approved'
         board.moveTask(taskId, approvalTransition.to, 'agent', agentId)
+        task.approvalStatus = 'approved'
       }
       break
     }
@@ -382,9 +382,9 @@ function handleAgentDecision(agentId: string, taskId: string, decision: AgentDec
         .find(t => !t.requiresApproval && !wf.isFinalStage(t.to))
       if (rejectTransition) {
         const targetLabel = wf.getStageConfig(rejectTransition.to)?.label ?? rejectTransition.to
-        task.approvalStatus = 'rejected'
         board.addToast(`🔄 ${agentName}: Changes requested → back to ${targetLabel}`, 'info')
         board.moveTask(taskId, rejectTransition.to, 'agent', agentId)
+        task.approvalStatus = 'rejected'
       }
       break
     }
@@ -456,7 +456,7 @@ Decision guide:
 function triggerPlannerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }) {
   const allAgents = board.agents.value
   const plannerAgent = allAgents.find(
-    (a) => a.role === 'planner' || a.id.includes('planner') || a.id.includes('architect'),
+    (a) => a.role === 'planner' || a.role === 'architect',
   )
 
   if (!plannerAgent) {
@@ -515,7 +515,6 @@ function triggerPlannerAgent(taskId: string, task: { title: string; description?
  */
 function triggerDeveloperAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }) {
   const allAgents = board.agents.value
-  board.addToast(`🔧 triggerDeveloperAgent: ${allAgents.length} agents, roles: [${allAgents.map(a => `${a.id}:${a.role}:${a.status}`).join(', ')}]`, 'info')
   const devAgent =
     allAgents.find((a) => a.role === 'developer' && a.status === 'idle') ||
     allAgents.find((a) => a.role === 'developer') ||

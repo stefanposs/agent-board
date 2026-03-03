@@ -512,7 +512,7 @@ function formatOutput(text: string): string {
                   flex: 1,
                   height: '6px',
                   borderRadius: '3px',
-                  background: wf.stages.value.indexOf(wf.stages.value.find(s => s.id === task?.stage)!) >= idx
+                  background: wf.stages.value.findIndex(s => s.id === task?.stage) >= idx
                     ? (stageConfig?.color || 'var(--accent-blue)')
                     : 'var(--bg-tertiary)',
                   transition: 'background 0.3s ease',
@@ -560,7 +560,7 @@ function formatOutput(text: string): string {
             <div v-else class="question-answer-display">
               <span style="font-size: 11px; color: var(--accent-green); font-weight: 600;">✅ Answered</span>
               <div style="font-size: 13px; margin-top: 4px;">{{ q.answer }}</div>
-              <span style="font-size: 11px; color: var(--text-muted);">{{ timeAgo(q.answeredAt!) }}</span>
+              <span v-if="q.answeredAt" style="font-size: 11px; color: var(--text-muted);">{{ timeAgo(q.answeredAt) }}</span>
             </div>
           </div>
         </div>
