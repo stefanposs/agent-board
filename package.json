@@ -7,6 +7,10 @@
   "publisher": "stefanposs",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stefanposs/agent-board"
+  },
   "main": "./dist/extension.cjs",
   "engines": {
     "vscode": "^1.95.0"
