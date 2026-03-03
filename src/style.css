@@ -365,6 +365,82 @@ body {
   transform: rotate(2deg);
 }
 
+.task-card.agent-working {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.25), 0 0 12px rgba(34, 197, 94, 0.1);
+}
+
+.task-card.needs-attention {
+  border-left: 3px solid var(--accent-orange);
+}
+
+.card-attention-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  margin: -10px -10px 8px -10px;
+  background: rgba(249, 115, 22, 0.12);
+  border-bottom: 1px solid rgba(249, 115, 22, 0.2);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: 11px;
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+
+.card-working-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: -10px -10px 8px -10px;
+  background: rgba(34, 197, 94, 0.08);
+  border-bottom: 1px solid rgba(34, 197, 94, 0.15);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: 11px;
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
+.card-attention-badge + .card-working-badge {
+  margin-top: 0;
+  border-radius: 0;
+}
+
+.working-pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.agent-avatar-mini {
+  position: relative;
+}
+
+.agent-avatar-mini.agent-active {
+  box-shadow: 0 0 0 2px var(--accent-green);
+}
+
+.agent-working-dot {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  border: 1.5px solid var(--bg-card);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
 .task-card-top {
   display: flex;
   align-items: flex-start;
@@ -464,6 +540,102 @@ body {
   font-size: 11px;
   color: var(--accent-orange);
   font-weight: 500;
+}
+
+/* ─── Detail Panel Tabs ──────────────────────────────────────── */
+
+.detail-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.detail-tab {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+
+.detail-tab:hover {
+  color: var(--text-secondary);
+}
+
+.detail-tab.active {
+  color: var(--text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--accent-blue);
+}
+
+.detail-tab .tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ─── Status Banner (Detail Panel) ───────────────────────────── */
+
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.status-banner.status-working {
+  background: rgba(34, 197, 94, 0.08);
+  color: var(--accent-green);
+  border-bottom-color: rgba(34, 197, 94, 0.15);
+}
+
+.status-banner.status-attention {
+  background: rgba(249, 115, 22, 0.1);
+  color: var(--accent-orange);
+  border-left: 3px solid var(--accent-orange);
+  border-bottom-color: rgba(249, 115, 22, 0.2);
+}
+
+.status-banner .status-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.status-banner .status-text {
+  flex: 1;
+}
+
+.status-banner .status-label {
+  font-weight: 600;
+}
+
+.status-banner .status-detail {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+
+.status-banner .status-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* ─── Sidebar Sections ───────────────────────────────────────── */
@@ -571,7 +743,7 @@ body {
 }
 
 .detail-panel {
-  width: 480px;
+  width: 580px;
   max-width: 100%;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border-color);

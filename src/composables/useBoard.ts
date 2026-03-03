@@ -1,5 +1,5 @@
 import { ref, computed, reactive, watch } from 'vue'
-import type { Task, Agent, Workspace, TaskEvent, TaskPriority, Session, SessionMessage, Comment } from '../domain'
+import type { Task, Agent, Workspace, TaskEvent, TaskPriority, TaskType, Session, SessionMessage, Comment } from '../domain'
 import { useWorkflow } from './useWorkflow'
 import { MOCK_TASKS, MOCK_AGENTS, MOCK_WORKSPACES } from '../mock/data'
 
@@ -241,8 +241,9 @@ function useBoard() {
     }, 8000)
   }
 
-  function createTask(opts: { title: string; description: string; priority: TaskPriority; workspaceId: string; tags: string[] }) {
+  function createTask(opts: { title: string; description: string; priority: TaskPriority; taskType?: TaskType; workspaceId: string; tags: string[] }) {
     const now = Date.now()
+    const taskType = opts.taskType || 'feature'
     const newTask: Task = {
       id: `task-${now}-${Math.random().toString(36).slice(2, 6)}`,
       title: opts.title,
@@ -264,6 +265,7 @@ function useBoard() {
       createdAt: now,
       updatedAt: now,
       tags: opts.tags,
+      taskType,
       progress: 0,
       comments: [],
       metrics: { createdAt: now, stageEnteredAt: { [wf.firstStage.value]: now }, feedbackLoops: { devToPlanner: 0, reviewToDev: 0 } },

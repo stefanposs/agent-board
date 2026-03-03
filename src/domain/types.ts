@@ -9,6 +9,10 @@ export type AgentStatus = 'idle' | 'working' | 'waiting' | 'blocked'
 
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 
+export type TaskType = 'feature' | 'bugfix' | 'docs' | 'infra' | 'research' | 'design' | 'ops' | 'other'
+
+export type HumanAttentionType = 'approval' | 'feedback' | 'clarification' | 'review'
+
 export type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected'
 
 export type PRStatus = 'none' | 'draft' | 'open' | 'changes_requested' | 'approved' | 'merged' | 'closed'
@@ -83,8 +87,10 @@ export interface Task {
   createdAt: number
   updatedAt: number
   tags: string[]
+  taskType: TaskType
   progress: number // 0-100
   blockedReason?: string
+  humanAttentionType?: HumanAttentionType
   branch?: string
   pullRequest?: PullRequest
   comments: Comment[]

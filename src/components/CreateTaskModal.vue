@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useBoard } from '../composables/useBoard'
-import type { TaskPriority } from '../domain'
+import type { TaskPriority, TaskType } from '../domain'
 
 const { workspaces, createTask, closeCreateModal } = useBoard()
 
 const title = ref('')
 const description = ref('')
 const priority = ref<TaskPriority>('medium')
+const taskType = ref<TaskType>('feature')
 const workspaceId = ref(workspaces.value[0]?.id || '')
 const tagsInput = ref('')
 
@@ -23,6 +24,7 @@ function onSubmit() {
     title: title.value.trim(),
     description: description.value.trim(),
     priority: priority.value,
+    taskType: taskType.value,
     workspaceId: workspaceId.value,
     tags,
   })
@@ -77,6 +79,21 @@ function onKeydown(e: KeyboardEvent) {
           </div>
 
           <div class="form-group" style="flex: 1;">
+            <label class="form-label">Type</label>
+            <select v-model="taskType" class="form-select">
+              <option value="feature">🚀 Feature</option>
+              <option value="bugfix">🐛 Bugfix</option>
+              <option value="docs">📄 Documentation</option>
+              <option value="infra">🔧 Infrastructure</option>
+              <option value="research">🔍 Research</option>
+              <option value="design">🎨 Design</option>
+              <option value="ops">⚙️ Operations</option>
+              <option value="other">📌 Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
             <label class="form-label">Workspace</label>
             <select v-model="workspaceId" class="form-select">
               <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">

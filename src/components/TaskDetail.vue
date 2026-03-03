@@ -205,6 +205,30 @@ function close() {
   emit('close')
 }
 
+// ─── Tabs ───────────────────────────────────────────────────────
+const activeTab = ref<'overview' | 'activity' | 'details'>('overview')
+
+/** Map task type to display label with icon */
+const taskTypeLabels: Record<string, string> = {
+  feature: '🚀 Feature',
+  bugfix: '🐛 Bugfix',
+  docs: '📄 Docs',
+  infra: '🔧 Infra',
+  research: '🔍 Research',
+  design: '🎨 Design',
+  ops: '⚙️ Ops',
+  other: '📌 Other',
+}
+
+const taskTypeLabel = computed(() => task.value ? (taskTypeLabels[task.value.taskType] || task.value.taskType) : '')
+
+/** Whether to show the Git section (only for dev-related task types or if branch exists) */
+const showGitSection = computed(() => {
+  if (!task.value) return false
+  if (task.value.branch) return true
+  return ['feature', 'bugfix', 'infra'].includes(task.value.taskType)
+})
+
 function askAgent() {
   if (!task.value) return
   const agentId = task.value.assignedAgents[0] || agents.value[0]?.id
@@ -244,124 +268,68 @@ function backendSuffix(): string {
   return label ? ` (${label})` : ''
 }
 
-/** Manually trigger the planner agent for this task (useful for tasks already in Planning) */
-function runPlannerManually() {
+/** Manually trigger an agent by role for this task. Replaces individual run functions. */
+function runAgentByRole(targetRoles: string[], label: string, buildPrompt: (t: any, ws: any, context: string) => string) {
   if (!task.value) return
   const t = task.value
-
   const allAgents = agents.value
-  const plannerAgent = allAgents.find(
-    (a) => a.role === 'planner' || a.id.includes('planner') || a.id.includes('architect'),
-  )
 
-  if (!plannerAgent) {
-    board.addToast(`❌ No Planner Agent found (${allAgents.length} agents, roles: ${allAgents.map(a => a.role).join(', ')})`, 'error')
+  // Find best matching agent (prefer idle)
+  let agent = null
+  for (const role of targetRoles) {
+    agent = allAgents.find(a => a.role === role && a.status === 'idle') || allAgents.find(a => a.role === role)
+    if (agent) break
+  }
+
+  if (!agent) {
+    board.addToast(`❌ No ${label} Agent found (${allAgents.length} agents, roles: ${allAgents.map(a => a.role).join(', ')})`, 'error')
     return
   }
 
   const ws = workspace.value
-  board.addToast(`🤖 Starting ${plannerAgent.name}...`, 'info')
+  board.addToast(`🤖 Starting ${agent.name}...`, 'info')
 
-  const session = board.getOrCreateSession(t.id, plannerAgent.id)
-  const prompt = `Analyze and plan the implementation for this task:\n\nTask: "${t.title}"\nDescription: ${t.description || '(no description)'}\nPriority: ${t.priority}\nTags: ${t.tags.length > 0 ? t.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\nPlease:\n1. Identify relevant files/components\n2. Assess feasibility and complexity\n3. Provide a step-by-step implementation plan\n4. List dependencies and potential risks\n5. Suggest existing patterns/conventions to follow`
+  // Gather context from previous sessions
+  const prevSessions = board.sessions.value.filter(
+    s => s.taskId === t.id && s.messages.some(m => m.role === 'assistant'),
+  )
+  const prevContext = prevSessions
+    .flatMap(s => s.messages.filter(m => m.role === 'assistant').map(m => m.content))
+    .join('\n\n')
 
+  const session = board.getOrCreateSession(t.id, agent.id)
+  const prompt = buildPrompt(t, ws, prevContext)
   board.addSessionMessage(session.id, 'user', prompt)
 
   if (ext.isWebview.value) {
-    ext.runAgent(plannerAgent.id, t.id, prompt, [], ws?.localPath, t.branch)
-    board.addToast(`✅ Agent request sent (${plannerAgent.id})`, 'success')
+    ext.runAgent(agent.id, t.id, prompt, [], ws?.localPath, t.branch)
+    board.addToast(`✅ Agent request sent (${agent.id})`, 'success')
   } else {
     board.addToast(`⚠️ Not in webview mode — agent cannot start`, 'warning')
   }
 
-  if (!t.assignedAgents.includes(plannerAgent.id)) {
-    t.assignedAgents.push(plannerAgent.id)
+  if (!t.assignedAgents.includes(agent.id)) {
+    t.assignedAgents.push(agent.id)
   }
   debouncedSave()
+}
+
+function runPlannerManually() {
+  runAgentByRole(['planner', 'architect'], 'Planner', (t, ws) => {
+    return `Analyze and plan the implementation for this task:\n\nTask: "${t.title}"\nDescription: ${t.description || '(no description)'}\nPriority: ${t.priority}\nTags: ${t.tags.length > 0 ? t.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\nPlease:\n1. Identify relevant files/components\n2. Assess feasibility and complexity\n3. Provide a step-by-step implementation plan\n4. List dependencies and potential risks\n5. Suggest existing patterns/conventions to follow`
+  })
 }
 
 function runDeveloperManually() {
-  if (!task.value) return
-  const t = task.value
-  const allAgents = agents.value
-  const devAgent =
-    allAgents.find((a) => a.role === 'developer' && a.status === 'idle') ||
-    allAgents.find((a) => a.role === 'developer') ||
-    allAgents.find((a) => a.role === 'devops' && a.status === 'idle') ||
-    allAgents.find((a) => a.role === 'devops')
-
-  if (!devAgent) {
-    board.addToast(`❌ No Developer Agent found (${allAgents.length} agents, roles: ${allAgents.map(a => a.role).join(', ')})`, 'error')
-    return
-  }
-
-  const ws = workspace.value
-  board.addToast(`🤖 Starting ${devAgent.name} for implementation...`, 'info')
-
-  const plannerSessions = board.sessions.value.filter(
-    (s) => s.taskId === t.id && s.messages.some((m) => m.role === 'assistant'),
-  )
-  const plannerContext = plannerSessions
-    .flatMap((s) => s.messages.filter((m) => m.role === 'assistant').map((m) => m.content))
-    .join('\n\n')
-
-  const session = board.getOrCreateSession(t.id, devAgent.id)
-  const prompt = `Implement the following task:\n\nTask: "${t.title}"\nDescription: ${t.description || '(no description)'}\nPriority: ${t.priority}\nTags: ${t.tags.length > 0 ? t.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\n${plannerContext ? `--- Planning Context ---\n${plannerContext}\n\n` : ''}Please:\n1. Implement the changes described in the planning phase\n2. Follow existing code patterns and conventions\n3. Write clean, well-tested code\n4. Commit your changes with meaningful messages`
-
-  board.addSessionMessage(session.id, 'user', prompt)
-
-  if (ext.isWebview.value) {
-    ext.runAgent(devAgent.id, t.id, prompt, [], ws?.localPath, t.branch)
-    board.addToast(`✅ Agent request sent (${devAgent.id})`, 'success')
-  } else {
-    board.addToast(`⚠️ Not in webview mode — agent cannot start`, 'warning')
-  }
-
-  if (!t.assignedAgents.includes(devAgent.id)) {
-    t.assignedAgents.push(devAgent.id)
-  }
-  debouncedSave()
+  runAgentByRole(['developer', 'devops'], 'Developer', (t, ws, ctx) => {
+    return `Implement the following task:\n\nTask: "${t.title}"\nDescription: ${t.description || '(no description)'}\nPriority: ${t.priority}\nTags: ${t.tags.length > 0 ? t.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\n${ctx ? `--- Planning Context ---\n${ctx}\n\n` : ''}Please:\n1. Implement the changes described in the planning phase\n2. Follow existing code patterns and conventions\n3. Write clean, well-tested code\n4. Commit your changes with meaningful messages`
+  })
 }
 
 function runReviewerManually() {
-  if (!task.value) return
-  const t = task.value
-  const allAgents = agents.value
-  const reviewAgent =
-    allAgents.find((a) => a.role === 'reviewer' && a.status === 'idle') ||
-    allAgents.find((a) => a.role === 'reviewer')
-
-  if (!reviewAgent) {
-    board.addToast(`❌ No Reviewer Agent found (${allAgents.length} agents, roles: ${allAgents.map(a => a.role).join(', ')})`, 'error')
-    return
-  }
-
-  const ws = workspace.value
-  board.addToast(`🤖 Starting ${reviewAgent.name} for review...`, 'info')
-
-  const implSessions = board.sessions.value.filter(
-    (s) => s.taskId === t.id && s.messages.some((m) => m.role === 'assistant'),
-  )
-  const implContext = implSessions
-    .flatMap((s) => s.messages.filter((m) => m.role === 'assistant').map((m) => m.content))
-    .join('\n\n')
-
-  const session = board.getOrCreateSession(t.id, reviewAgent.id)
-  const prompt = `Review the implementation for this task:\n\nTask: "${t.title}"\nDescription: ${t.description || '(no description)'}\nPriority: ${t.priority}\nTags: ${t.tags.length > 0 ? t.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\n${implContext ? `--- Implementation Context ---\n${implContext}\n\n` : ''}Please:\n1. Review the code changes for correctness and quality\n2. Check for potential bugs, security issues, and performance concerns\n3. Verify adherence to project conventions and patterns\n4. Provide actionable feedback or approve the changes`
-
-  board.addSessionMessage(session.id, 'user', prompt)
-
-  if (ext.isWebview.value) {
-    ext.runAgent(reviewAgent.id, t.id, prompt, [], ws?.localPath, t.branch)
-    board.addToast(`✅ Agent request sent (${reviewAgent.id})`, 'success')
-  } else {
-    board.addToast(`⚠️ Not in webview mode — agent cannot start`, 'warning')
-  }
-
-  if (!t.assignedAgents.includes(reviewAgent.id)) {
-    t.assignedAgents.push(reviewAgent.id)
-  }
-  debouncedSave()
+  runAgentByRole(['reviewer'], 'Reviewer', (t, ws, ctx) => {
+    return `Review the implementation for this task:\n\nTask: "${t.title}"\nDescription: ${t.description || '(no description)'}\nPriority: ${t.priority}\nTags: ${t.tags.length > 0 ? t.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\n${ctx ? `--- Implementation Context ---\n${ctx}\n\n` : ''}Please:\n1. Review the code changes for correctness and quality\n2. Check for potential bugs, security issues, and performance concerns\n3. Verify adherence to project conventions and patterns\n4. Provide actionable feedback or approve the changes`
+  })
 }
 
 /** Simple markdown-ish rendering for agent output */
@@ -392,361 +360,436 @@ function formatOutput(text: string): string {
           <span :class="`priority-${task.priority}`" style="font-size: 12px; font-weight: 600;">
             ● {{ task.priority.toUpperCase() }}
           </span>
+          <span style="font-size: 12px; color: var(--text-muted); font-weight: 500;">
+            {{ taskTypeLabel }}
+          </span>
         </div>
         <div class="detail-title">{{ task.title }}</div>
         <div class="detail-desc">{{ task.description }}</div>
       </div>
 
-      <!-- Approval Actions (workflow-driven approval gate) -->
-      <div v-if="hasApprovalGate && task.approvalStatus === 'pending'" class="detail-actions" style="background: rgba(249, 115, 22, 0.05);">
-        <div style="flex: 1;">
-          <div style="font-size: 13px; font-weight: 600; color: var(--accent-orange); margin-bottom: 6px;">
-            ⚠️ Human Approval Required
-          </div>
-          <div style="font-size: 12px; color: var(--text-secondary);">
-            {{ task.blockedReason || 'Review complete. Awaiting human decision.' }}
+      <!-- ─── Status Banner: Agent Working ─── -->
+      <div v-if="activeAgentsOnTask.length > 0" class="status-banner status-working">
+        <span class="status-icon"><span class="working-pulse" style="width: 8px; height: 8px;"></span></span>
+        <div class="status-text">
+          <div class="status-label">Agent{{ activeAgentsOnTask.length > 1 ? 's' : '' }} working</div>
+          <div class="status-detail">
+            {{ activeAgentsOnTask.map(a => `${a.avatar} ${a.name}`).join(', ') }}
           </div>
         </div>
-      </div>
-      <div v-if="hasApprovalGate && task.approvalStatus === 'pending'" class="detail-actions">
-        <button class="btn btn-success" @click="approveTask(task.id); close()">
-          ✅ {{ approveButtonLabel }}
-        </button>
-        <button class="btn btn-danger" @click="rejectTask(task.id); close()">
-          ❌ Request Changes
-        </button>
-        <button class="btn" @click="askAgent">
-          💬 Ask Agent
-        </button>
-      </div>
-
-      <!-- Available Transitions + Dynamic Agent Actions -->
-      <div v-if="!isAtFinalStage" class="detail-section" style="background: rgba(59, 130, 246, 0.04); border: 1px solid rgba(59, 130, 246, 0.15); border-radius: 8px; padding: 12px;">
-        <div class="detail-section-title">⚡ Actions</div>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button
-            v-if="eligibleRoles.includes('planner') || eligibleRoles.includes('architect')"
-            class="btn btn-sm"
-            style="background: var(--accent-purple); color: white;"
-            @click="runPlannerManually"
-          >
-            🤖 Run Planner{{ backendSuffix() }}
-          </button>
-          <button
-            v-if="eligibleRoles.includes('developer') || eligibleRoles.includes('devops')"
-            class="btn btn-sm"
-            style="background: var(--accent-blue, #3b82f6); color: white;"
-            @click="runDeveloperManually"
-          >
-            👨‍💻 Run Developer{{ backendSuffix() }}
-          </button>
-          <button
-            v-if="eligibleRoles.includes('reviewer')"
-            class="btn btn-sm"
-            style="background: var(--accent-orange, #f97316); color: white;"
-            @click="runReviewerManually"
-          >
-            🔍 Run Reviewer{{ backendSuffix() }}
-          </button>
-          <button
-            v-for="tr in transitions"
-            :key="`${tr.from}-${tr.to}`"
-            class="btn btn-sm"
-            :class="{ 'btn-primary': !wf.isFinalStage(tr.to) && tr.from !== tr.to }"
-            @click="handleMoveTask(tr.to)"
-          >
-            {{ tr.label }}
+        <div class="status-actions">
+          <button v-for="a in activeAgentsOnTask" :key="a.id" class="btn btn-sm" @click="openSession(a.id)">
+            💬 {{ a.name }}
           </button>
         </div>
       </div>
 
-      <!-- Workspace & Meta -->
-      <div class="detail-section">
-        <div class="detail-section-title">Details</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
-          <div>
-            <span style="color: var(--text-muted);">Workspace</span><br />
-            <span v-if="workspace" :style="{ color: workspace.color }">{{ workspace.icon }} {{ workspace.name }}</span>
+      <!-- ─── Status Banner: Human Attention Required ─── -->
+      <div v-if="hasApprovalGate && task.approvalStatus === 'pending'" class="status-banner status-attention">
+        <span class="status-icon">⚠️</span>
+        <div class="status-text">
+          <div class="status-label">
+            {{ task.humanAttentionType === 'clarification' ? 'Agent needs clarification' : task.humanAttentionType === 'feedback' ? 'Feedback requested' : task.humanAttentionType === 'review' ? 'Review requested' : 'Human Approval Required' }}
           </div>
-          <div>
-            <span style="color: var(--text-muted);">Repository</span><br />
-            <span>{{ workspace?.repo }}</span>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Progress</span><br />
-            <span>{{ task.progress }}%</span>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Updated</span><br />
-            <span>{{ timeAgo(task.updatedAt) }}</span>
-          </div>
+          <div class="status-detail">{{ task.blockedReason || 'Review complete. Awaiting human decision.' }}</div>
+        </div>
+        <div class="status-actions">
+          <button class="btn btn-sm btn-success" @click="approveTask(task.id); close()">✅ {{ approveButtonLabel }}</button>
+          <button class="btn btn-sm btn-danger" @click="rejectTask(task.id); close()">❌ Reject</button>
+          <button class="btn btn-sm" @click="askAgent">💬 Ask</button>
         </div>
       </div>
 
-      <!-- Branch & Pull Request -->
-      <div class="detail-section">
-        <div class="detail-section-title">Git</div>
-        <div v-if="task.branch" class="detail-git-info">
-          <div class="detail-branch">
-            <span class="git-icon-lg">⎇</span>
-            <code class="branch-name">{{ task.branch }}</code>
-          </div>
-          <div v-if="task.pullRequest" class="detail-pr">
-            <div class="detail-pr-header">
-              <span class="pr-status-badge" :class="'pr-status-' + task.pullRequest.status">
-                {{ task.pullRequest.status === 'merged' ? '🟣 Merged' : task.pullRequest.status === 'open' ? '🟢 Open' : task.pullRequest.status === 'draft' ? '⚪ Draft' : task.pullRequest.status === 'approved' ? '✅ Approved' : task.pullRequest.status === 'changes_requested' ? '🔴 Changes Requested' : task.pullRequest.status }}
-              </span>
-              <span class="pr-number">#{{ task.pullRequest.number }}</span>
-            </div>
-            <div class="detail-pr-title">{{ task.pullRequest.title }}</div>
-            <div class="detail-pr-stats">
-              <span class="pr-stat pr-stat-add">+{{ task.pullRequest.additions }}</span>
-              <span class="pr-stat pr-stat-del">-{{ task.pullRequest.deletions }}</span>
-              <span class="pr-stat pr-stat-files">📄 {{ task.pullRequest.changedFiles }} files</span>
-              <span class="pr-stat pr-stat-checks" :class="{ 'checks-pass': task.pullRequest.checks.passed === task.pullRequest.checks.total }">
-                {{ task.pullRequest.checks.passed === task.pullRequest.checks.total ? '✅' : '⏳' }} {{ task.pullRequest.checks.passed }}/{{ task.pullRequest.checks.total }} checks
-              </span>
-            </div>
-            <a class="pr-link" :href="task.pullRequest.url" target="_blank" @click.stop>View on GitHub →</a>
-          </div>
+      <!-- ─── Tabs ─── -->
+      <div class="detail-tabs">
+        <div class="detail-tab" :class="{ active: activeTab === 'overview' }" @click="activeTab = 'overview'">
+          Overview
         </div>
-        <div v-else>
-          <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">
-            No branch created yet.
-          </div>
-          <button
-            v-if="isExtensionMode && workspace?.localPath"
-            class="btn btn-sm"
-            @click="createBranchManually"
-          >
-            ⎇ Create Feature Branch
-          </button>
-          <div v-else-if="!isExtensionMode" style="font-size: 12px; color: var(--text-muted);">
-            Branch auto-created when task moves to planning (in VS Code extension mode).
-          </div>
+        <div class="detail-tab" :class="{ active: activeTab === 'activity' }" @click="activeTab = 'activity'">
+          Activity
+          <span v-if="activeAgentsOnTask.length > 0 || taskSessions.length > 0" class="tab-count">{{ taskSessions.length || '●' }}</span>
+        </div>
+        <div class="detail-tab" :class="{ active: activeTab === 'details' }" @click="activeTab = 'details'">
+          Details
+          <span v-if="taskComments.length > 0" class="tab-count">{{ taskComments.length }}</span>
         </div>
       </div>
 
-      <!-- 🔴 Live Agent Activity -->
-      <div v-if="hasLiveActivity || recentMessages.length > 0" class="detail-section live-activity-section">
-        <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
-          <span>🤖 Agent Activity</span>
-          <span v-if="activeAgentsOnTask.length > 0" class="live-pulse">● live</span>
-        </div>
-
-        <div ref="liveContainer" class="live-activity-container">
-          <!-- Recent stored messages -->
-          <div
-            v-for="msg in recentMessages"
-            :key="msg.id"
-            class="live-msg"
-            :class="'live-msg-' + msg.role"
-          >
-            <div class="live-msg-header">
-              <span class="live-msg-avatar" :style="{ color: msg.agentColor }">
-                {{ msg.role === 'user' ? '👤' : msg.agentAvatar }}
-              </span>
-              <span class="live-msg-name">{{ msg.role === 'user' ? 'You' : msg.agentName }}</span>
-              <span class="live-msg-time">{{ timeAgo(msg.timestamp) }}</span>
-              <span v-if="msg.tokensUsed" class="live-msg-tokens">🪙 {{ msg.tokensUsed }}</span>
-            </div>
-            <div class="live-msg-body" v-html="formatOutput(msg.content)"></div>
-          </div>
-
-          <!-- Live streaming outputs -->
-          <div
-            v-for="[agentId, content] in liveStreams"
-            :key="'stream-' + agentId"
-            class="live-msg live-msg-assistant live-msg-streaming"
-          >
-            <div class="live-msg-header">
-              <span class="live-msg-avatar" :style="{ color: getAgent(agentId)?.color || '#666' }">
-                {{ getAgent(agentId)?.avatar || '🤖' }}
-              </span>
-              <span class="live-msg-name">{{ getAgent(agentId)?.name || agentId }}</span>
-              <span class="live-streaming-badge">● streaming</span>
-            </div>
-            <div v-if="content" class="live-msg-body" v-html="formatOutput(content)"></div>
-            <div v-else class="live-msg-body live-waiting">Thinking…</div>
-          </div>
-
-          <!-- Empty state -->
-          <div v-if="recentMessages.length === 0 && liveStreams.size === 0" class="live-empty">
-            Waiting for agent activity…
-          </div>
-        </div>
-
-        <!-- Quick open agent panel -->
-        <div v-if="activeAgentsOnTask.length > 0" class="live-agents-bar">
-          <span style="font-size: 11px; color: var(--text-muted);">Active:</span>
-          <button
-            v-for="a in activeAgentsOnTask"
-            :key="a.id"
-            class="live-agent-chip"
-            @click="openSession(a.id)"
-          >
-            {{ a.avatar }} {{ a.name }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Sessions -->
-      <div class="detail-section">
-        <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
-          <span>Sessions ({{ taskSessions.length }})</span>
-          <span v-if="totalTaskTokens > 0" class="session-meta-badge">
-            🪙 {{ formatTokens(totalTaskTokens) }} tokens
-          </span>
-          <span v-if="totalTaskCost > 0" class="session-meta-badge">
-            💰 ${{ totalTaskCost.toFixed(3) }}
-          </span>
-          <button v-if="taskSessions.length > 0" class="btn btn-sm" style="font-size: 11px; padding: 2px 8px; margin-left: auto;" @click="askAgent">+ Open Chat</button>
-        </div>
-        <div v-if="taskSessions.length === 0" style="font-size: 13px; color: var(--text-muted);">
-          No sessions yet. Move task to Planning or open an agent to start.
-        </div>
-        <div
-          v-for="session in taskSessions"
-          :key="session.id"
-          class="session-row-expandable"
-        >
-          <div class="session-row-header" @click="toggleSession(session.id)">
-            <div class="agent-avatar" :style="{ background: (getAgent(session.agentId)?.color || '#666') + '20' }">
-              {{ getAgent(session.agentId)?.avatar || '🤖' }}
-            </div>
-            <div style="flex: 1; min-width: 0;">
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <span class="agent-name">{{ getAgent(session.agentId)?.name || session.agentId }}</span>
-                <span class="session-status-dot" :class="'session-' + session.status"></span>
-                <span style="font-size: 10px; color: var(--text-muted);">{{ getAgent(session.agentId)?.modelConfig.model }}</span>
-              </div>
-              <div style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 2px;">
-                <span>💬 {{ session.messages.length }} messages</span>
-                <span v-if="session.totalTokensUsed > 0">🪙 {{ formatTokens(session.totalTokensUsed) }}</span>
-                <span>{{ timeAgo(session.updatedAt) }}</span>
-              </div>
-            </div>
-            <span class="session-expand-icon" :class="{ 'expanded': expandedSessions.has(session.id) }">
-              ▸
-            </span>
-          </div>
-          <!-- Expanded: message history -->
-          <div v-if="expandedSessions.has(session.id)" class="session-messages">
-            <div
-              v-for="msg in session.messages"
-              :key="msg.id"
-              class="session-msg"
-              :class="'session-msg-' + msg.role"
-            >
-              <div class="session-msg-header">
-                <span>{{ msg.role === 'user' ? '👤 You' : msg.role === 'system' ? '⚙️ System' : (getAgent(session.agentId)?.avatar || '🤖') + ' ' + (getAgent(session.agentId)?.name || session.agentId) }}</span>
-                <span class="session-msg-time">{{ timeAgo(msg.timestamp) }}</span>
-                <span v-if="msg.tokensUsed" class="session-msg-tokens">🪙 {{ msg.tokensUsed }}</span>
-              </div>
-              <div class="session-msg-content">{{ msg.content.length > 300 ? msg.content.slice(0, 300) + '...' : msg.content }}</div>
-            </div>
-            <button class="btn btn-sm" style="margin-top: 6px;" @click="openSession(session.agentId)">
-              💬 Open Full Chat
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 💬 Comments -->
-      <div class="detail-section">
-        <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
-          <span>💬 Comments ({{ taskComments.length }})</span>
-        </div>
-
-        <!-- Comment input -->
-        <div class="comment-input-area">
-          <textarea
-            v-model="newCommentText"
-            class="comment-textarea"
-            placeholder="Add a note, question, or remark..."
-            rows="2"
-            @keydown.ctrl.enter="submitComment"
-            @keydown.meta.enter="submitComment"
-          />
-          <div class="comment-input-actions">
-            <span class="comment-hint">⌘+Enter to send</span>
+      <!-- ═══════════════ OVERVIEW TAB ═══════════════ -->
+      <template v-if="activeTab === 'overview'">
+        <!-- Actions -->
+        <div v-if="!isAtFinalStage" class="detail-section" style="background: rgba(59, 130, 246, 0.04); border: 1px solid rgba(59, 130, 246, 0.15); border-radius: 8px; padding: 12px;">
+          <div class="detail-section-title">⚡ Actions</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
             <button
-              class="btn btn-sm btn-primary"
-              :disabled="!newCommentText.trim()"
-              @click="submitComment"
+              v-if="eligibleRoles.includes('planner') || eligibleRoles.includes('architect')"
+              class="btn btn-sm"
+              style="background: var(--accent-purple); color: white;"
+              @click="runPlannerManually"
             >
-              Send comment
+              🤖 Run Planner{{ backendSuffix() }}
+            </button>
+            <button
+              v-if="eligibleRoles.includes('developer') || eligibleRoles.includes('devops')"
+              class="btn btn-sm"
+              style="background: var(--accent-blue, #3b82f6); color: white;"
+              @click="runDeveloperManually"
+            >
+              👨‍💻 Run Developer{{ backendSuffix() }}
+            </button>
+            <button
+              v-if="eligibleRoles.includes('reviewer')"
+              class="btn btn-sm"
+              style="background: var(--accent-orange, #f97316); color: white;"
+              @click="runReviewerManually"
+            >
+              🔍 Run Reviewer{{ backendSuffix() }}
+            </button>
+            <button
+              v-for="tr in transitions"
+              :key="`${tr.from}-${tr.to}`"
+              class="btn btn-sm"
+              :class="{ 'btn-primary': !wf.isFinalStage(tr.to) && tr.from !== tr.to }"
+              @click="handleMoveTask(tr.to)"
+            >
+              {{ tr.label }}
             </button>
           </div>
         </div>
 
-        <!-- Comment list -->
-        <div v-if="taskComments.length === 0" style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">
-          No comments yet. Add notes, questions, or remarks.
+        <!-- Details Grid -->
+        <div class="detail-section">
+          <div class="detail-section-title">Details</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+            <div>
+              <span style="color: var(--text-muted);">Workspace</span><br />
+              <span v-if="workspace" :style="{ color: workspace.color }">{{ workspace.icon }} {{ workspace.name }}</span>
+            </div>
+            <div>
+              <span style="color: var(--text-muted);">Type</span><br />
+              <span>{{ taskTypeLabel }}</span>
+            </div>
+            <div>
+              <span style="color: var(--text-muted);">Progress</span><br />
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span>{{ task.progress }}%</span>
+                <div v-if="task.progress > 0" style="flex: 1; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;">
+                  <div :style="{ width: task.progress + '%', height: '100%', background: task.progress >= 80 ? 'var(--accent-green)' : task.progress >= 50 ? 'var(--accent-blue)' : 'var(--accent-yellow)', borderRadius: '2px', transition: 'width 0.5s ease' }"></div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <span style="color: var(--text-muted);">Updated</span><br />
+              <span>{{ timeAgo(task.updatedAt) }}</span>
+            </div>
+          </div>
         </div>
-        <div v-else class="comments-list">
+
+        <!-- Pipeline Progress -->
+        <div class="detail-section">
+          <div class="detail-section-title">Pipeline Progress</div>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <template v-for="(stage, idx) in wf.stages.value" :key="stage.id">
+              <div
+                :style="{
+                  flex: 1,
+                  height: '6px',
+                  borderRadius: '3px',
+                  background: wf.stages.value.indexOf(wf.stages.value.find(s => s.id === task?.stage)!) >= idx
+                    ? (stageConfig?.color || 'var(--accent-blue)')
+                    : 'var(--bg-tertiary)',
+                  transition: 'background 0.3s ease',
+                }"
+                :title="stage.label"
+              ></div>
+            </template>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 4px;">
+            <span>{{ wf.stages.value[0]?.label }}</span>
+            <span>{{ wf.stages.value[wf.stages.value.length - 1]?.label }}</span>
+          </div>
+        </div>
+
+        <!-- Assigned Agents (compact) -->
+        <div v-if="task.assignedAgents.length" class="detail-section">
+          <div class="detail-section-title">Assigned Agents</div>
+          <div v-for="agentId in task.assignedAgents" :key="agentId" class="agent-row" style="margin-bottom: 6px;">
+            <div class="agent-avatar" :style="{ background: (getAgent(agentId)?.color || '#666') + '20' }">
+              {{ getAgent(agentId)?.avatar }}
+            </div>
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="agent-name">{{ getAgent(agentId)?.name || agentId }}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">{{ getAgent(agentId)?.role }}</span>
+              </div>
+            </div>
+            <div class="agent-status-dot" :class="`agent-status-${getAgent(agentId)?.status || 'idle'}`"></div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ═══════════════ ACTIVITY TAB ═══════════════ -->
+      <template v-if="activeTab === 'activity'">
+        <!-- Live Agent Activity -->
+        <div v-if="hasLiveActivity || recentMessages.length > 0" class="detail-section live-activity-section">
+          <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
+            <span>🤖 Agent Activity</span>
+            <span v-if="activeAgentsOnTask.length > 0" class="live-pulse">● live</span>
+          </div>
+
+          <div ref="liveContainer" class="live-activity-container">
+            <div
+              v-for="msg in recentMessages"
+              :key="msg.id"
+              class="live-msg"
+              :class="'live-msg-' + msg.role"
+            >
+              <div class="live-msg-header">
+                <span class="live-msg-avatar" :style="{ color: msg.agentColor }">
+                  {{ msg.role === 'user' ? '👤' : msg.agentAvatar }}
+                </span>
+                <span class="live-msg-name">{{ msg.role === 'user' ? 'You' : msg.agentName }}</span>
+                <span class="live-msg-time">{{ timeAgo(msg.timestamp) }}</span>
+                <span v-if="msg.tokensUsed" class="live-msg-tokens">🪙 {{ msg.tokensUsed }}</span>
+              </div>
+              <div class="live-msg-body" v-html="formatOutput(msg.content)"></div>
+            </div>
+
+            <div
+              v-for="[agentId, content] in liveStreams"
+              :key="'stream-' + agentId"
+              class="live-msg live-msg-assistant live-msg-streaming"
+            >
+              <div class="live-msg-header">
+                <span class="live-msg-avatar" :style="{ color: getAgent(agentId)?.color || '#666' }">
+                  {{ getAgent(agentId)?.avatar || '🤖' }}
+                </span>
+                <span class="live-msg-name">{{ getAgent(agentId)?.name || agentId }}</span>
+                <span class="live-streaming-badge">● streaming</span>
+              </div>
+              <div v-if="content" class="live-msg-body" v-html="formatOutput(content)"></div>
+              <div v-else class="live-msg-body live-waiting">Thinking…</div>
+            </div>
+
+            <div v-if="recentMessages.length === 0 && liveStreams.size === 0" class="live-empty">
+              Waiting for agent activity…
+            </div>
+          </div>
+
+          <div v-if="activeAgentsOnTask.length > 0" class="live-agents-bar">
+            <span style="font-size: 11px; color: var(--text-muted);">Active:</span>
+            <button
+              v-for="a in activeAgentsOnTask"
+              :key="a.id"
+              class="live-agent-chip"
+              @click="openSession(a.id)"
+            >
+              {{ a.avatar }} {{ a.name }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Sessions -->
+        <div class="detail-section">
+          <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
+            <span>Sessions ({{ taskSessions.length }})</span>
+            <span v-if="totalTaskTokens > 0" class="session-meta-badge">
+              🪙 {{ formatTokens(totalTaskTokens) }} tokens
+            </span>
+            <span v-if="totalTaskCost > 0" class="session-meta-badge">
+              💰 ${{ totalTaskCost.toFixed(3) }}
+            </span>
+            <button v-if="taskSessions.length > 0" class="btn btn-sm" style="font-size: 11px; padding: 2px 8px; margin-left: auto;" @click="askAgent">+ Open Chat</button>
+          </div>
+          <div v-if="taskSessions.length === 0" style="font-size: 13px; color: var(--text-muted);">
+            No sessions yet. Move task to Planning or open an agent to start.
+          </div>
           <div
-            v-for="comment in taskComments"
-            :key="comment.id"
-            class="comment-item"
+            v-for="session in taskSessions"
+            :key="session.id"
+            class="session-row-expandable"
           >
-            <div class="comment-header">
-              <span class="comment-author">
-                {{ comment.author === 'user' ? '👤 User' : (getAgent(comment.author)?.avatar || '🤖') + ' ' + (getAgent(comment.author)?.name || comment.author) }}
+            <div class="session-row-header" @click="toggleSession(session.id)">
+              <div class="agent-avatar" :style="{ background: (getAgent(session.agentId)?.color || '#666') + '20' }">
+                {{ getAgent(session.agentId)?.avatar || '🤖' }}
+              </div>
+              <div style="flex: 1; min-width: 0;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span class="agent-name">{{ getAgent(session.agentId)?.name || session.agentId }}</span>
+                  <span class="session-status-dot" :class="'session-' + session.status"></span>
+                  <span style="font-size: 10px; color: var(--text-muted);">{{ getAgent(session.agentId)?.modelConfig.model }}</span>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 2px;">
+                  <span>💬 {{ session.messages.length }} messages</span>
+                  <span v-if="session.totalTokensUsed > 0">🪙 {{ formatTokens(session.totalTokensUsed) }}</span>
+                  <span>{{ timeAgo(session.updatedAt) }}</span>
+                </div>
+              </div>
+              <span class="session-expand-icon" :class="{ 'expanded': expandedSessions.has(session.id) }">
+                ▸
               </span>
-              <span class="comment-time">{{ timeAgo(comment.timestamp) }}</span>
-              <button class="comment-delete" @click="handleDeleteComment(comment.id)" title="Delete">
-                ✕
+            </div>
+            <div v-if="expandedSessions.has(session.id)" class="session-messages">
+              <div
+                v-for="msg in session.messages"
+                :key="msg.id"
+                class="session-msg"
+                :class="'session-msg-' + msg.role"
+              >
+                <div class="session-msg-header">
+                  <span>{{ msg.role === 'user' ? '👤 You' : msg.role === 'system' ? '⚙️ System' : (getAgent(session.agentId)?.avatar || '🤖') + ' ' + (getAgent(session.agentId)?.name || session.agentId) }}</span>
+                  <span class="session-msg-time">{{ timeAgo(msg.timestamp) }}</span>
+                  <span v-if="msg.tokensUsed" class="session-msg-tokens">🪙 {{ msg.tokensUsed }}</span>
+                </div>
+                <div class="session-msg-content">{{ msg.content.length > 300 ? msg.content.slice(0, 300) + '...' : msg.content }}</div>
+              </div>
+              <button class="btn btn-sm" style="margin-top: 6px;" @click="openSession(session.agentId)">
+                💬 Open Full Chat
               </button>
             </div>
-            <div class="comment-body">{{ comment.content }}</div>
           </div>
         </div>
-      </div>
 
-      <!-- Tags -->
-      <div class="detail-section">
-        <div class="detail-section-title">Tags</div>
-        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <span v-for="tag in task.tags" :key="tag" class="tag">{{ tag }}</span>
-        </div>
-      </div>
-
-      <!-- Assigned Agents -->
-      <div v-if="task.assignedAgents.length" class="detail-section">
-        <div class="detail-section-title">Assigned Agents</div>
-        <div v-for="agentId in task.assignedAgents" :key="agentId" class="agent-row" style="margin-bottom: 6px;">
-          <div class="agent-avatar" :style="{ background: (getAgent(agentId)?.color || '#666') + '20' }">
-            {{ getAgent(agentId)?.avatar }}
-          </div>
-          <div style="flex: 1;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span class="agent-name">{{ getAgent(agentId)?.name || agentId }}</span>
-              <span style="font-size: 11px; color: var(--text-muted);">{{ getAgent(agentId)?.role }}</span>
-            </div>
-            <div v-if="getAgent(agentId)" style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 2px;">
-              <span>🤖 {{ getAgent(agentId)?.modelConfig.model }}</span>
-              <span>🌡 {{ getAgent(agentId)?.modelConfig.temperature }}</span>
-            </div>
-          </div>
-          <div class="agent-status-dot" :class="`agent-status-${getAgent(agentId)?.status || 'idle'}`"></div>
-        </div>
-      </div>
-
-      <!-- Available Transitions -->
-      <!-- Event Timeline -->
-      <div class="detail-section">
-        <div class="detail-section-title">Timeline</div>
-        <div class="timeline">
-          <div v-for="event in [...task.events].reverse()" :key="event.id" class="timeline-item">
-            <div class="timeline-dot" :style="{ background: eventColor(event.type) }"></div>
-            <div class="timeline-content">
-              <div class="timeline-message">{{ event.message }}</div>
-              <div class="timeline-time">{{ timeAgo(event.timestamp) }}</div>
+        <!-- Timeline -->
+        <div class="detail-section">
+          <div class="detail-section-title">Timeline</div>
+          <div class="timeline">
+            <div v-for="event in [...task.events].reverse()" :key="event.id" class="timeline-item">
+              <div class="timeline-dot" :style="{ background: eventColor(event.type) }"></div>
+              <div class="timeline-content">
+                <div class="timeline-message">{{ event.message }}</div>
+                <div class="timeline-time">{{ timeAgo(event.timestamp) }}</div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </template>
+
+      <!-- ═══════════════ DETAILS TAB ═══════════════ -->
+      <template v-if="activeTab === 'details'">
+        <!-- Git (conditional on task type) -->
+        <div v-if="showGitSection" class="detail-section">
+          <div class="detail-section-title">Git</div>
+          <div v-if="task.branch" class="detail-git-info">
+            <div class="detail-branch">
+              <span class="git-icon-lg">⎇</span>
+              <code class="branch-name">{{ task.branch }}</code>
+            </div>
+            <div v-if="task.pullRequest" class="detail-pr">
+              <div class="detail-pr-header">
+                <span class="pr-status-badge" :class="'pr-status-' + task.pullRequest.status">
+                  {{ task.pullRequest.status === 'merged' ? '🟣 Merged' : task.pullRequest.status === 'open' ? '🟢 Open' : task.pullRequest.status === 'draft' ? '⚪ Draft' : task.pullRequest.status === 'approved' ? '✅ Approved' : task.pullRequest.status === 'changes_requested' ? '🔴 Changes Requested' : task.pullRequest.status }}
+                </span>
+                <span class="pr-number">#{{ task.pullRequest.number }}</span>
+              </div>
+              <div class="detail-pr-title">{{ task.pullRequest.title }}</div>
+              <div class="detail-pr-stats">
+                <span class="pr-stat pr-stat-add">+{{ task.pullRequest.additions }}</span>
+                <span class="pr-stat pr-stat-del">-{{ task.pullRequest.deletions }}</span>
+                <span class="pr-stat pr-stat-files">📄 {{ task.pullRequest.changedFiles }} files</span>
+                <span class="pr-stat pr-stat-checks" :class="{ 'checks-pass': task.pullRequest.checks.passed === task.pullRequest.checks.total }">
+                  {{ task.pullRequest.checks.passed === task.pullRequest.checks.total ? '✅' : '⏳' }} {{ task.pullRequest.checks.passed }}/{{ task.pullRequest.checks.total }} checks
+                </span>
+              </div>
+              <a class="pr-link" :href="task.pullRequest.url" target="_blank" @click.stop>View on GitHub →</a>
+            </div>
+          </div>
+          <div v-else>
+            <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">
+              No branch created yet.
+            </div>
+            <button
+              v-if="isExtensionMode && workspace?.localPath"
+              class="btn btn-sm"
+              @click="createBranchManually"
+            >
+              ⎇ Create {{ task.taskType === 'bugfix' ? 'Bugfix' : 'Feature' }} Branch
+            </button>
+            <div v-else-if="!isExtensionMode" style="font-size: 12px; color: var(--text-muted);">
+              Branch auto-created when task moves to planning (in VS Code extension mode).
+            </div>
+          </div>
+        </div>
+
+        <!-- Comments -->
+        <div class="detail-section">
+          <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
+            <span>💬 Comments ({{ taskComments.length }})</span>
+          </div>
+
+          <div class="comment-input-area">
+            <textarea
+              v-model="newCommentText"
+              class="comment-textarea"
+              placeholder="Add a note, question, or remark..."
+              rows="2"
+              @keydown.ctrl.enter="submitComment"
+              @keydown.meta.enter="submitComment"
+            />
+            <div class="comment-input-actions">
+              <span class="comment-hint">⌘+Enter to send</span>
+              <button
+                class="btn btn-sm btn-primary"
+                :disabled="!newCommentText.trim()"
+                @click="submitComment"
+              >
+                Send comment
+              </button>
+            </div>
+          </div>
+
+          <div v-if="taskComments.length === 0" style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">
+            No comments yet. Add notes, questions, or remarks.
+          </div>
+          <div v-else class="comments-list">
+            <div
+              v-for="comment in taskComments"
+              :key="comment.id"
+              class="comment-item"
+            >
+              <div class="comment-header">
+                <span class="comment-author">
+                  {{ comment.author === 'user' ? '👤 User' : (getAgent(comment.author)?.avatar || '🤖') + ' ' + (getAgent(comment.author)?.name || comment.author) }}
+                </span>
+                <span class="comment-time">{{ timeAgo(comment.timestamp) }}</span>
+                <button class="comment-delete" @click="handleDeleteComment(comment.id)" title="Delete">
+                  ✕
+                </button>
+              </div>
+              <div class="comment-body">{{ comment.content }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tags -->
+        <div class="detail-section">
+          <div class="detail-section-title">Tags</div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <span v-for="tag in task.tags" :key="tag" class="tag">{{ tag }}</span>
+          </div>
+        </div>
+
+        <!-- Assigned Agents (full info) -->
+        <div v-if="task.assignedAgents.length" class="detail-section">
+          <div class="detail-section-title">Assigned Agents</div>
+          <div v-for="agentId in task.assignedAgents" :key="agentId" class="agent-row" style="margin-bottom: 6px;">
+            <div class="agent-avatar" :style="{ background: (getAgent(agentId)?.color || '#666') + '20' }">
+              {{ getAgent(agentId)?.avatar }}
+            </div>
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="agent-name">{{ getAgent(agentId)?.name || agentId }}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">{{ getAgent(agentId)?.role }}</span>
+              </div>
+              <div v-if="getAgent(agentId)" style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 2px;">
+                <span>🤖 {{ getAgent(agentId)?.modelConfig.model }}</span>
+                <span>🌡 {{ getAgent(agentId)?.modelConfig.temperature }}</span>
+              </div>
+            </div>
+            <div class="agent-status-dot" :class="`agent-status-${getAgent(agentId)?.status || 'idle'}`"></div>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>

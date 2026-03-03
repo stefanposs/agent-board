@@ -13,9 +13,19 @@ const emit = defineEmits<{
   dragend: []
 }>()
 
-const { selectTask, getAgent, getWorkspace, getTaskSessions } = useBoard()
+const { selectTask, getAgent, getWorkspace, getTaskSessions, agents } = useBoard()
 const sessionCount = computed(() => getTaskSessions(props.task.id).length)
 const commentCount = computed(() => props.task.comments?.length || 0)
+
+/** True when any agent is actively working on this task */
+const isAgentWorking = computed(() =>
+  agents.value.some(a => a.status === 'working' && a.currentTaskId === props.task.id)
+)
+
+/** True when the task needs human attention (approval, feedback, clarification) */
+const needsAttention = computed(() =>
+  props.task.approvalStatus === 'pending' || !!props.task.humanAttentionType
+)
 
 const workspace = getWorkspace(props.task.workspaceId)
 
@@ -40,12 +50,23 @@ function progressColor(progress: number): string {
 <template>
   <div
     class="task-card"
-    :class="{ dragging: isDragging }"
+    :class="{ dragging: isDragging, 'agent-working': isAgentWorking, 'needs-attention': needsAttention }"
     draggable="true"
     @dragstart="emit('dragstart')"
     @dragend="emit('dragend')"
     @click="selectTask(task.id)"
   >
+    <!-- Attention Banner (top of card) -->
+    <div v-if="needsAttention" class="card-attention-badge">
+      <template v-if="task.humanAttentionType === 'clarification'">❓ Agent needs clarification</template>
+      <template v-else-if="task.humanAttentionType === 'feedback'">💬 Feedback requested</template>
+      <template v-else-if="task.humanAttentionType === 'review'">👁️ Review requested</template>
+      <template v-else>⚠️ Approval required</template>
+    </div>
+    <!-- Agent Working Indicator -->
+    <div v-if="isAgentWorking" class="card-working-badge">
+      <span class="working-pulse"></span> Agent working…
+    </div>
     <div class="task-card-top">
       <div class="task-card-title">
         <span class="priority-dot" :class="`priority-dot-${task.priority}`" style="display: inline-block; margin-right: 6px; vertical-align: middle;"></span>
@@ -71,10 +92,12 @@ function progressColor(progress: number): string {
           v-for="agentId in task.assignedAgents"
           :key="agentId"
           class="agent-avatar-mini"
+          :class="{ 'agent-active': getAgent(agentId)?.status === 'working' && getAgent(agentId)?.currentTaskId === task.id }"
           :style="{ background: (getAgent(agentId)?.color || '#666') + '30' }"
           :title="getAgent(agentId)?.name"
         >
           {{ getAgent(agentId)?.avatar }}
+          <span v-if="getAgent(agentId)?.status === 'working' && getAgent(agentId)?.currentTaskId === task.id" class="agent-working-dot"></span>
         </div>
       </div>
     </div>
@@ -104,8 +127,5 @@ function progressColor(progress: number): string {
       <div class="progress-fill" :style="{ width: task.progress + '%', background: progressColor(task.progress) }"></div>
     </div>
 
-    <div v-if="task.approvalStatus === 'pending'" class="blocked-badge">
-      ⚠️ Human Approval Required
-    </div>
   </div>
 </template>

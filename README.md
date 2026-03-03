@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/icon.png" alt="Agent Board" width="128" />
+  <img src="media/logo.png" alt="Agent Board" width="128" />
 </p>
 
 <h1 align="center">Agent Board</h1>
