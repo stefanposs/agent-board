@@ -1,0 +1,37 @@
+# Agent Board Settings
+# This file configures the Agent Board extension.
+# Edit this file to customize workspaces, agents, and behavior.
+
+# Workspace paths to scan for git repositories.
+# Each path is scanned for git repos (direct or one level deep).
+workspaces:
+  - ~/Repos/examples
+
+# Agent configuration.
+agents:
+  configPath: ""
+  repoPaths:
+    - ~/Repos/ai-agents
+  maxVisible: 0    # 0 = show all
+
+# Board display settings.
+board:
+  maxTasks: 0          # 0 = unlimited
+  defaultPriority: medium
+  autoSave: true
+  autoSaveIntervalMs: 30000
+
+# Developer agent settings.
+developer:
+  executionMode: cli    # cli or llm-api
+  cliCommand: claude
+  cliArgs: [--print, --allowedTools, Edit, Write, Bash, Read, MultiEdit]
+
+# Backend selection.
+backends:
+  default: copilot-lm    # auto, copilot-lm, claude-cli, cline
+  claudeCli:
+    command: claude
+    args: [--print, --allowedTools, Edit, Write, Bash, Read, MultiEdit]
+  cline:
+    delegateMode: panel

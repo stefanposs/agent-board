@@ -1,0 +1,97 @@
+site_name: Agent Board Documentation
+site_description: >-
+  AI-powered kanban board for VS Code with autonomous agent workflows.
+  Multi-backend support, configurable workflows, and multi-agent code review.
+site_author: Stefan Poss
+
+repo_name: stefanposs/agent-board
+repo_url: https://github.com/stefanposs/agent-board
+
+docs_dir: assets/mkdocs
+site_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.instant
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - admonition
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.inlinehilite
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Why Agent Board: why-agent-board.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Extension Host: architecture/extension-host.md
+      - Webview Frontend: architecture/webview.md
+      - Message Protocol: architecture/protocol.md
+  - Setup:
+      - Installation: setup/installation.md
+      - Configuration: setup/configuration.md
+  - Guides:
+      - Agent Configuration: guides/agents.md
+      - Backend Selection: guides/backends.md
+      - Task Workflow: guides/workflow.md
+  - Development:
+      - Getting Started: development/getting-started.md
+      - Testing: development/testing.md
+      - Contributing: development/contributing.md
+  - API Reference:
+      - Protocol Types: api/protocol.md
+      - Domain Types: api/domain.md

@@ -1,0 +1,147 @@
+{
+  "name": "agent-board",
+  "displayName": "Agent Board",
+  "description": "Visual AI agent workflow orchestration — Kanban board for multi-agent development",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "stefanposs",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "icon": "media/icon.png",
+  "extensionDependencies": [],
+  "extensionPack": [
+    "github.copilot-chat"
+  ],
+  "capabilities": {
+    "languageModelAccess": {
+      "canSendRequest": true
+    }
+  },
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentBoard.openBoard",
+        "title": "Open Agent Board",
+        "category": "Agent Board",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "agentBoard.addWorkspacePath",
+        "title": "Add Workspace Path",
+        "category": "Agent Board",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentBoard.scanWorkspaces",
+        "title": "Scan Workspaces",
+        "category": "Agent Board",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentBoard.diagnose",
+        "title": "Diagnose (Check LLM, Copilot, Workspaces)",
+        "category": "Agent Board",
+        "icon": "$(pulse)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentBoard",
+          "title": "Agent Board",
+          "icon": "media/agent-board.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentBoard": [
+        {
+          "type": "webview",
+          "id": "agentBoard.sidebarView",
+          "name": "Agent Board"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentBoard.openBoard",
+          "when": "view == agentBoard.sidebarView",
+          "group": "navigation"
+        },
+        {
+          "command": "agentBoard.addWorkspacePath",
+          "when": "view == agentBoard.sidebarView",
+          "group": "navigation"
+        },
+        {
+          "command": "agentBoard.scanWorkspaces",
+          "when": "view == agentBoard.sidebarView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Agent Board",
+      "properties": {
+        "agentBoard.workspacePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Folders to scan for Git repositories (e.g. ~/Repos)"
+        },
+        "agentBoard.agentConfigPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to agent config file or directory (JSON). Leave empty for defaults."
+        },
+        "agentBoard.agentRepoPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Paths to agent repos (e.g. ~/Repos/ai-agents). Scans skills/*/SKILL.md and agents/*.agent.md."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "build:ext": "node esbuild.ext.mjs",
+    "build:webview": "vite build",
+    "build:all": "npm run build:ext && npm run build:webview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "deploy": "npm run build:all && cp dist/extension.cjs ~/.vscode/extensions/stefanposs.agent-board-0.1.0/dist/extension.cjs && cp dist/webview/main.js ~/.vscode/extensions/stefanposs.agent-board-0.1.0/dist/webview/main.js && cp dist/webview/main.css ~/.vscode/extensions/stefanposs.agent-board-0.1.0/dist/webview/main.css && echo '✅ Deployed to installed extension'",
+    "watch:ext": "node esbuild.ext.mjs --watch",
+    "package": "npm run build:all && npx @vscode/vsce package --no-dependencies",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "@vitejs/plugin-vue": "^5.2.3",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "~5.7.0",
+    "vite": "^6.3.0",
+    "vitest": "^4.0.18",
+    "vue-tsc": "^2.2.0"
+  }
+}

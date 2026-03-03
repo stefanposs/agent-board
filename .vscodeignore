@@ -1,0 +1,17 @@
+.vscode/**
+src/**
+ext/**
+node_modules/**
+.gitignore
+*.map
+tsconfig.json
+esbuild.ext.mjs
+vite.config.ts
+justfile
+env.d.ts
+index.html
+README.md
+!dist/**
+!media/**
+!package.json
+!LICENSE
