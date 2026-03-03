@@ -2,7 +2,7 @@
   "name": "agent-board",
   "displayName": "Agent Board",
   "description": "Visual AI agent workflow orchestration — Kanban board for multi-agent development",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "publisher": "stefanposs",
   "license": "MIT",
