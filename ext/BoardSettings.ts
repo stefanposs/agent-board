@@ -369,7 +369,7 @@ export class BoardSettingsManager {
             requiresApproval: t.requiresApproval === true,
             label: String(t.label || `${t.from} → ${t.to}`),
             effects: Array.isArray(t.effects)
-              ? t.effects.map(String).filter((e): e is TransitionEffect =>
+              ? t.effects.map(String).filter((e: string): e is TransitionEffect =>
                   ['set-approval-pending', 'set-approved', 'mark-complete', 'reset-approval', 'reduce-progress'].includes(e)
                 )
               : undefined,
@@ -420,12 +420,12 @@ export class BoardSettingsManager {
       const vscode = require('vscode')
       const cfg = vscode.workspace.getConfiguration('agentBoard')
       return {
-        workspaces: cfg.get<string[]>('workspacePaths', []),
+        workspaces: (cfg.get('workspacePaths', []) as string[]),
         agentRepoPaths: [
-          ...cfg.get<string[]>('agentRepoPaths', []),
-          cfg.get<string>('agentRepoPath', ''),
+          ...(cfg.get('agentRepoPaths', []) as string[]),
+          (cfg.get('agentRepoPath', '') as string),
         ].filter(Boolean),
-        agentConfigPath: cfg.get<string>('agentConfigPath', ''),
+        agentConfigPath: (cfg.get('agentConfigPath', '') as string),
       }
     } catch {
       return { workspaces: [], agentRepoPaths: [], agentConfigPath: '' }

@@ -50,8 +50,15 @@ preview:
 
 # ─── Quality ────────────────────────────────────────────────────
 
-# Run all checks
-check: typecheck
+# Run unit tests
+test:
+    npx vitest run
+
+# Type-check everything (webview + extension host)
+typecheck-all: typecheck typecheck-ext
+
+# Run all QA checks (typecheck, lint, test, format-check)
+qa: typecheck-all test
 
 # ─── VS Code Extension ─────────────────────────────────────────
 

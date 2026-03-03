@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import * as path from 'path'
 import * as fs from 'fs/promises'
+import { Dirent } from 'fs'
 import type { AgentConfig } from './protocol'
 
 // ─── Sensible defaults that work out-of-the-box ─────────────────
@@ -163,9 +164,9 @@ export class AgentConfigManager {
   private async loadFromSkillsRepo(repoPath: string): Promise<AgentConfig[]> {
     const skillsDir = path.join(repoPath, 'skills')
     const agents: AgentConfig[] = []
-    let entries: Awaited<ReturnType<typeof fs.readdir>>
+    let entries: Dirent<string>[]
     try {
-      entries = await fs.readdir(skillsDir, { withFileTypes: true })
+      entries = await fs.readdir(skillsDir, { withFileTypes: true, encoding: 'utf-8' })
     } catch {
       return agents
     }
@@ -205,9 +206,9 @@ export class AgentConfigManager {
   private async loadFromAgentsMd(repoPath: string): Promise<AgentConfig[]> {
     const agentsDir = path.join(repoPath, 'agents')
     const agents: AgentConfig[] = []
-    let entries: Awaited<ReturnType<typeof fs.readdir>>
+    let entries: Dirent<string>[]
     try {
-      entries = await fs.readdir(agentsDir, { withFileTypes: true })
+      entries = await fs.readdir(agentsDir, { withFileTypes: true, encoding: 'utf-8' })
     } catch {
       return agents
     }

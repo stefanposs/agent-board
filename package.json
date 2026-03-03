@@ -135,6 +135,7 @@
     "yaml": "^2.8.2"
   },
   "devDependencies": {
+    "@types/node": "^25.3.3",
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-vue": "^5.2.3",
     "@vscode/vsce": "^3.2.0",
