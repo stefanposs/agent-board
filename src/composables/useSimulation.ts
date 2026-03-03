@@ -68,11 +68,9 @@ export function startAgents() {
       if (!board.simulationRunning.value) return
       if (agent.status === 'working') return // Agent is busy
 
-      const eligibleStages = wf.getAgentRolesForStage
-        ? wf.agentStageMappings.value
+      const eligibleStages = wf.agentStageMappings.value
             .filter(m => m.role === agent.role)
             .flatMap(m => m.stages)
-        : []
       const eligibleTasks = board.tasks.value.filter(
         (t) =>
           eligibleStages.includes(t.stage) &&

@@ -5,7 +5,8 @@ import { useWorkflow } from '../composables/useWorkflow'
 import TaskCard from './TaskCard.vue'
 
 const { tasksByStage, moveTask, openCreateModal, tasks } = useBoard()
-const { stages } = useWorkflow()
+const wf = useWorkflow()
+const { stages } = wf
 
 const dragOverColumn = ref<string | null>(null)
 const draggedTaskId = ref<string | null>(null)

@@ -28,6 +28,7 @@ const displayAgents = computed(() => {
     avatar: a.avatar,
     color: a.color,
     model: a.modelConfig?.model || '—',
+    backend: a.backend as string | undefined,
   }))
 })
 
