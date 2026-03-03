@@ -15,7 +15,7 @@ function formatTokens(n: number): string {
   <header class="app-header">
     <div class="app-header-left">
       <div class="app-logo">
-        <div class="app-logo-icon">⚡</div>
+        <img src="/logo.png" alt="Agent Board" class="app-logo-img" />
         <span>Agent Board</span>
       </div>
       <span style="font-size: 12px; color: var(--text-muted); border-left: 1px solid var(--border-color); padding-left: 12px;">

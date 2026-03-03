@@ -18,7 +18,7 @@
   "categories": [
     "Other"
   ],
-  "icon": "media/icon.png",
+  "icon": "media/logo.png",
   "extensionDependencies": [],
   "extensionPack": [
     "github.copilot-chat"

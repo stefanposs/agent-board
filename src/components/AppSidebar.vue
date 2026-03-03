@@ -71,7 +71,7 @@ function timeAgo(ts: number): string {
       </div>
       <div v-for="item in activityFeed.slice(0, 15)" :key="item.id" class="activity-item">
         <span class="activity-time">{{ timeAgo(item.timestamp) }}</span>
-        <span v-html="item.message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')"></span>
+        <span v-html="item.message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')"></span>
       </div>
     </div>
   </aside>

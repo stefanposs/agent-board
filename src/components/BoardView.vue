@@ -46,7 +46,7 @@ function onDrop(stageId: string) {
     <!-- Onboarding overlay when board is empty -->
     <div v-if="isBoardEmpty" class="board-onboarding">
       <div class="onboarding-card">
-        <div class="onboarding-icon">🚀</div>
+        <img src="/logo.png" alt="Agent Board" class="onboarding-logo" />
         <h2 class="onboarding-title">Welcome to Agent Board</h2>
         <p class="onboarding-text">
           Create your first task to get started. AI agents will automatically plan, implement, and review your code.
