@@ -35,6 +35,8 @@ export const MOCK_AGENTS: Agent[] = [
     color: '#8b5cf6',
     modelConfig: { model: 'claude-opus-4', maxContextTokens: 200000, temperature: 0.3 },
     usage: { totalTokensUsed: 48200, contextTokensUsed: 32100, maxContextTokens: 200000, requestCount: 12, estimatedCostUsd: 1.44 },
+    skills: ['architecture', 'system-design', 'api-design', 'requirements-analysis'],
+    languages: ['typescript', 'python', 'golang'],
   },
   {
     id: 'agent-dev',
@@ -46,6 +48,8 @@ export const MOCK_AGENTS: Agent[] = [
     color: '#3b82f6',
     modelConfig: { model: 'claude-sonnet-4', maxContextTokens: 200000, temperature: 0.2 },
     usage: { totalTokensUsed: 124500, contextTokensUsed: 89000, maxContextTokens: 200000, requestCount: 45, estimatedCostUsd: 3.12 },
+    skills: ['full-stack', 'testing', 'database', 'api-implementation'],
+    languages: ['typescript', 'python', 'vue', 'sql'],
   },
   {
     id: 'agent-reviewer',
@@ -57,6 +61,8 @@ export const MOCK_AGENTS: Agent[] = [
     color: '#f97316',
     modelConfig: { model: 'gpt-4o', maxContextTokens: 128000, temperature: 0.1 },
     usage: { totalTokensUsed: 67800, contextTokensUsed: 45200, maxContextTokens: 128000, requestCount: 22, estimatedCostUsd: 2.03 },
+    skills: ['code-review', 'security', 'testing', 'performance'],
+    languages: ['typescript', 'python', 'golang', 'rust'],
   },
   {
     id: 'agent-devops',
@@ -68,6 +74,8 @@ export const MOCK_AGENTS: Agent[] = [
     color: '#10b981',
     modelConfig: { model: 'gemini-2.5-pro', maxContextTokens: 1000000, temperature: 0.1 },
     usage: { totalTokensUsed: 31400, contextTokensUsed: 22500, maxContextTokens: 1000000, requestCount: 8, estimatedCostUsd: 0.78 },
+    skills: ['ci-cd', 'terraform', 'docker', 'kubernetes', 'monitoring'],
+    languages: ['hcl', 'bash', 'python', 'yaml'],
   },
   {
     id: 'agent-architect',
@@ -79,6 +87,8 @@ export const MOCK_AGENTS: Agent[] = [
     color: '#ef4444',
     modelConfig: { model: 'o3', maxContextTokens: 200000, temperature: 0.4 },
     usage: { totalTokensUsed: 89100, contextTokensUsed: 62300, maxContextTokens: 200000, requestCount: 18, estimatedCostUsd: 4.50 },
+    skills: ['system-design', 'ddd', 'microservices', 'api-design', 'event-driven'],
+    languages: ['typescript', 'golang', 'python', 'rust'],
   },
 ]
 

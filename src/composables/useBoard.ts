@@ -241,7 +241,7 @@ function useBoard() {
     }, 8000)
   }
 
-  function createTask(opts: { title: string; description: string; priority: TaskPriority; taskType?: TaskType; workspaceId: string; tags: string[] }) {
+  function createTask(opts: { title: string; description: string; priority: TaskPriority; taskType?: TaskType; workspaceId: string; tags: string[]; requiredSkills?: string[] }) {
     const now = Date.now()
     const taskType = opts.taskType || 'feature'
     const newTask: Task = {
@@ -267,6 +267,8 @@ function useBoard() {
       tags: opts.tags,
       taskType,
       progress: 0,
+      requiredSkills: opts.requiredSkills?.length ? opts.requiredSkills : undefined,
+      pendingQuestions: [],
       comments: [],
       metrics: { createdAt: now, stageEnteredAt: { [wf.firstStage.value]: now }, feedbackLoops: { devToPlanner: 0, reviewToDev: 0 } },
     }
@@ -309,7 +311,7 @@ function useBoard() {
   /** Replace mock data with real data from the extension host. */
   function initFromExtension(data: {
     workspaces: Array<{ id: string; name: string; localPath: string; repo: string; branch: string; hasChanges: boolean; icon: string; color: string }>
-    agents: Array<{ id: string; name: string; role: string; avatar: string; color: string; model: string; temperature: number; maxContextTokens: number; systemPrompt: string }>
+    agents: Array<{ id: string; name: string; role: string; avatar: string; color: string; model: string; temperature: number; maxContextTokens: number; systemPrompt: string; skills?: string[]; languages?: string[] }>
     persistedTasks?: any[]
     persistedSessions?: any[]
   }) {
@@ -348,6 +350,8 @@ function useBoard() {
         requestCount: 0,
         estimatedCostUsd: 0,
       },
+      skills: a.skills || [],
+      languages: a.languages || [],
     }))
 
     // Restore persisted tasks or start fresh
@@ -386,7 +390,7 @@ function useBoard() {
   }
 
   /** Update agents from extension host (e.g. after adding agent repo path). */
-  function updateAgentsFromExtension(agentConfigs: Array<{ id: string; name: string; role: string; avatar: string; color: string; model: string; temperature: number; maxContextTokens: number; systemPrompt: string }>) {
+  function updateAgentsFromExtension(agentConfigs: Array<{ id: string; name: string; role: string; avatar: string; color: string; model: string; temperature: number; maxContextTokens: number; systemPrompt: string; skills?: string[]; languages?: string[] }>) {
     agents.value = agentConfigs.map((a) => ({
       id: a.id,
       name: a.name,
@@ -406,8 +410,8 @@ function useBoard() {
         maxContextTokens: a.maxContextTokens,
         requestCount: 0,
         estimatedCostUsd: 0,
-      },
-    }))
+      },      skills: a.skills || [],
+      languages: a.languages || [],    }))
     addActivity(`🤖 Agents updated — ${agentConfigs.length} agents loaded`, 'human_action')
   }
 
@@ -553,6 +557,58 @@ function useBoard() {
     return `${prefix}/${slug}`
   }
 
+  /** Task types that should get a feature branch when moved to in-progress. */
+  const BRANCH_TASK_TYPES: string[] = ['feature', 'bugfix', 'infra']
+
+  /** Add a question from an agent that needs a human answer. */
+  function addAgentQuestion(taskId: string, agentId: string, question: string) {
+    const task = tasks.value.find((t) => t.id === taskId)
+    if (!task) return
+    if (!task.pendingQuestions) task.pendingQuestions = []
+    const q: import('../domain').AgentQuestion = {
+      id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      agentId,
+      question,
+      timestamp: Date.now(),
+      status: 'pending',
+    }
+    task.pendingQuestions.push(q)
+    addActivity(`❓ Agent asked: "${question}" on "${task.title}"`, 'agent_action')
+    addToast('Agent has a question', 'warning')
+  }
+
+  /** Answer an agent's pending question. */
+  function answerAgentQuestion(taskId: string, questionId: string, answer: string) {
+    const task = tasks.value.find((t) => t.id === taskId)
+    if (!task || !task.pendingQuestions) return
+    const q = task.pendingQuestions.find((qn) => qn.id === questionId)
+    if (!q) return
+    q.answer = answer
+    q.answeredAt = Date.now()
+    q.status = 'answered'
+    addActivity(`✅ Question answered on "${task.title}"`, 'human_action')
+    addToast('Answer submitted', 'success')
+  }
+
+  /** Find the best-matching agent for a task based on required skills / languages. */
+  function getBestAgentForTask(agentList: Agent[], targetRoles: string[], task: Task): Agent | null {
+    const needed = task.requiredSkills || []
+    // Filter to agents matching any of the target roles
+    const candidates = agentList.filter((a) => targetRoles.includes(a.role))
+    if (candidates.length === 0) return null
+    if (needed.length === 0) return candidates.find((a) => a.status === 'idle') || candidates[0] || null
+    let bestAgent: Agent | null = null
+    let bestScore = -1
+    for (const agent of candidates) {
+      const skillHits = needed.filter((s) => agent.skills.includes(s) || agent.languages.includes(s)).length
+      if (skillHits > bestScore) {
+        bestScore = skillHits
+        bestAgent = agent
+      }
+    }
+    return bestAgent
+  }
+
   return {
     // State
     tasks,
@@ -609,6 +665,12 @@ function useBoard() {
     getSession,
     setTaskBranch,
     slugifyBranchName,
+    // Agent Questions
+    addAgentQuestion,
+    answerAgentQuestion,
+    getBestAgentForTask,
+    /** Whether a task type requires a git branch */
+    needsBranch: (taskType: string) => BRANCH_TASK_TYPES.includes(taskType),
     // Comments
     addComment,
     deleteComment,

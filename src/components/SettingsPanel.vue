@@ -152,7 +152,7 @@ onMounted(() => {
   <div class="detail-overlay" @click.self="closeSettings">
     <div class="settings-panel">
       <div class="create-modal-header">
-        <h2 class="create-modal-title">⚙️ Settings</h2>
+        <h2 class="create-modal-title"><img src="/logo.png" alt="" class="modal-logo" /> Settings</h2>
         <button class="detail-close" @click="closeSettings">✕</button>
       </div>
 

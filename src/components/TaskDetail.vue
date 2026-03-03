@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useBoard } from '../composables/useBoard'
 import { useExtension } from '../composables/useExtension'
 import { useWorkflow } from '../composables/useWorkflow'
+import type { Agent } from '../domain'
 import { debouncedSave } from '../composables/usePersistence'
 
 const props = defineProps<{
@@ -14,7 +15,7 @@ const emit = defineEmits<{
 }>()
 
 const board = useBoard()
-const { tasks, getAgent, getWorkspace, approveTask, rejectTask, moveTask, selectTask, agents, openAgentPanel, getTaskSessions, slugifyBranchName, isExtensionMode, workspaces, addComment, deleteComment } = board
+const { tasks, getAgent, getWorkspace, approveTask, rejectTask, moveTask, selectTask, agents, openAgentPanel, getTaskSessions, slugifyBranchName, isExtensionMode, workspaces, addComment, deleteComment, addAgentQuestion, answerAgentQuestion, getBestAgentForTask } = board
 const ext = useExtension()
 const wf = useWorkflow()
 
@@ -48,6 +49,16 @@ const recentMessages = computed(() => {
   })
   return msgs.sort((a, b) => b.timestamp - a.timestamp).slice(0, 20).reverse()
 })
+
+// ─── Agent Questions ────────────────────────────────────────────
+const questionAnswers = reactive<Record<string, string>>({})
+
+function submitAnswer(questionId: string) {
+  const answer = questionAnswers[questionId]?.trim()
+  if (!answer || !task.value) return
+  answerAgentQuestion(task.value.id, questionId, answer)
+  delete questionAnswers[questionId]
+}
 
 function scrollLiveToBottom() {
   nextTick(() => {
@@ -274,11 +285,14 @@ function runAgentByRole(targetRoles: string[], label: string, buildPrompt: (t: a
   const t = task.value
   const allAgents = agents.value
 
-  // Find best matching agent (prefer idle)
-  let agent = null
-  for (const role of targetRoles) {
-    agent = allAgents.find(a => a.role === role && a.status === 'idle') || allAgents.find(a => a.role === role)
-    if (agent) break
+  // Use skill-based matching when available, fallback to simple role matching
+  let agent: Agent | null = getBestAgentForTask(allAgents, targetRoles, t)
+  if (!agent) {
+    // Fallback: simple role scan
+    for (const role of targetRoles) {
+      agent = allAgents.find(a => a.role === role && a.status === 'idle') || allAgents.find(a => a.role === role) || null
+      if (agent) break
+    }
   }
 
   if (!agent) {
@@ -287,7 +301,10 @@ function runAgentByRole(targetRoles: string[], label: string, buildPrompt: (t: a
   }
 
   const ws = workspace.value
-  board.addToast(`🤖 Starting ${agent.name}...`, 'info')
+  const matchedSkills = [...agent.skills, ...agent.languages].filter(s =>
+    [...(t.requiredSkills || []), ...t.tags].some(ts => ts.toLowerCase() === s.toLowerCase())
+  )
+  board.addToast(`🤖 Starting ${agent.name}${matchedSkills.length ? ` (matched: ${matchedSkills.join(', ')})` : ''}...`, 'info')
 
   // Gather context from previous sessions
   const prevSessions = board.sessions.value.filter(
@@ -507,6 +524,52 @@ function formatOutput(text: string): string {
           <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 4px;">
             <span>{{ wf.stages.value[0]?.label }}</span>
             <span>{{ wf.stages.value[wf.stages.value.length - 1]?.label }}</span>
+          </div>
+        </div>
+
+        <!-- Agent Questions (Rückfragen) -->
+        <div v-if="task.pendingQuestions && task.pendingQuestions.length > 0" class="detail-section">
+          <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
+            <span>❓ Agent Questions</span>
+            <span v-if="task.pendingQuestions.filter(q => q.status === 'pending').length > 0" class="tab-count" style="background: rgba(249,115,22,0.15); color: var(--accent-orange);">
+              {{ task.pendingQuestions.filter(q => q.status === 'pending').length }} pending
+            </span>
+          </div>
+          <div v-for="q in task.pendingQuestions" :key="q.id" class="question-item" :class="q.status">
+            <div class="question-header">
+              <span class="question-agent-avatar" :style="{ color: getAgent(q.agentId)?.color || '#666' }">
+                {{ getAgent(q.agentId)?.avatar || '🤖' }}
+              </span>
+              <span style="font-weight: 600; font-size: 12px;">{{ getAgent(q.agentId)?.name || q.agentId }}</span>
+              <span style="font-size: 11px; color: var(--text-muted); margin-left: auto;">{{ timeAgo(q.timestamp) }}</span>
+            </div>
+            <div class="question-text">{{ q.question }}</div>
+            <!-- Answer form for pending -->
+            <div v-if="q.status === 'pending'" class="question-answer-form">
+              <input
+                v-model="questionAnswers[q.id]"
+                class="question-answer-input"
+                placeholder="Type your answer..."
+                @keydown.enter="submitAnswer(q.id)"
+              />
+              <button class="btn btn-sm btn-primary" :disabled="!questionAnswers[q.id]?.trim()" @click="submitAnswer(q.id)">
+                Reply
+              </button>
+            </div>
+            <!-- Answered state -->
+            <div v-else class="question-answer-display">
+              <span style="font-size: 11px; color: var(--accent-green); font-weight: 600;">✅ Answered</span>
+              <div style="font-size: 13px; margin-top: 4px;">{{ q.answer }}</div>
+              <span style="font-size: 11px; color: var(--text-muted);">{{ timeAgo(q.answeredAt!) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Required Skills -->
+        <div v-if="task.requiredSkills && task.requiredSkills.length > 0" class="detail-section">
+          <div class="detail-section-title">Required Skills</div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <span v-for="skill in task.requiredSkills" :key="skill" class="skill-tag">{{ skill }}</span>
           </div>
         </div>
 

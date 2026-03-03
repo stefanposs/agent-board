@@ -62,6 +62,10 @@ export interface Agent {
   color: string
   modelConfig: AgentModelConfig
   usage: AgentUsageStats
+  /** Technical skills this agent excels at, e.g. 'api-design', 'testing', 'database' */
+  skills: string[]
+  /** Programming languages this agent can work with, e.g. 'python', 'golang' */
+  languages: string[]
 }
 
 export interface TaskEvent {
@@ -72,6 +76,16 @@ export interface TaskEvent {
   toStage?: string
   agentId?: string
   message: string
+}
+
+export interface AgentQuestion {
+  id: string
+  agentId: string
+  question: string
+  timestamp: number
+  answer?: string
+  answeredAt?: number
+  status: 'pending' | 'answered'
 }
 
 export interface Task {
@@ -91,6 +105,10 @@ export interface Task {
   progress: number // 0-100
   blockedReason?: string
   humanAttentionType?: HumanAttentionType
+  /** Skills needed for this task, used for agent matching */
+  requiredSkills?: string[]
+  /** Questions agents have asked that need human answers */
+  pendingQuestions?: AgentQuestion[]
   branch?: string
   pullRequest?: PullRequest
   comments: Comment[]

@@ -185,8 +185,9 @@ board.onTaskMoved((taskId, fromStage, toStage, task) => {
     const toLabel = wf.getStageConfig(toStage)?.label ?? toStage
     board.addToast(`⚙️ ${task.title}: ${fromStage} → ${toLabel}`, 'info')
 
-    // Auto-create branch when leaving first stage (entering 2nd stage for the first time)
-    if (fromStage === wf.firstStage.value && !task.branch) {
+    // Auto-create branch when leaving first stage (only for code-related task types)
+    const branchTaskTypes = ['feature', 'bugfix', 'infra']
+    if (fromStage === wf.firstStage.value && !task.branch && branchTaskTypes.includes(task.taskType)) {
       const ws = board.workspaces.value.find((w) => w.id === task.workspaceId)
       const branchName = board.slugifyBranchName(task.title)
 

@@ -27,6 +27,11 @@ const needsAttention = computed(() =>
   props.task.approvalStatus === 'pending' || !!props.task.humanAttentionType
 )
 
+/** Number of pending agent questions */
+const pendingQuestionCount = computed(() =>
+  props.task.pendingQuestions?.filter(q => q.status === 'pending').length || 0
+)
+
 const workspace = getWorkspace(props.task.workspaceId)
 
 function priorityColor(p: string): string {
@@ -58,7 +63,7 @@ function progressColor(progress: number): string {
   >
     <!-- Attention Banner (top of card) -->
     <div v-if="needsAttention" class="card-attention-badge">
-      <template v-if="task.humanAttentionType === 'clarification'">❓ Agent needs clarification</template>
+      <template v-if="task.humanAttentionType === 'clarification'">❓ Agent needs clarification ({{ pendingQuestionCount }})</template>
       <template v-else-if="task.humanAttentionType === 'feedback'">💬 Feedback requested</template>
       <template v-else-if="task.humanAttentionType === 'review'">👁️ Review requested</template>
       <template v-else>⚠️ Approval required</template>

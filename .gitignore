@@ -36,3 +36,4 @@ site/
 
 # Temp
 temp-init/
+.tasks/

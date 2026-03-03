@@ -108,6 +108,13 @@ body {
   letter-spacing: -0.02em;
 }
 
+.app-logo-img {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+}
+
 .app-logo-icon {
   width: 28px;
   height: 28px;
@@ -638,6 +645,91 @@ body {
   flex-shrink: 0;
 }
 
+/* ─── Agent Questions ────────────────────────────────────────── */
+
+.question-item {
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  transition: border-color 0.15s;
+}
+
+.question-item.pending {
+  border-left: 3px solid var(--accent-orange);
+  background: rgba(249, 115, 22, 0.04);
+}
+
+.question-item.answered {
+  border-left: 3px solid var(--accent-green);
+  opacity: 0.75;
+}
+
+.question-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.question-agent-avatar {
+  font-size: 16px;
+}
+
+.question-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.question-answer-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.question-answer-input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.question-answer-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.question-answer-display {
+  padding: 8px 10px;
+  background: rgba(34, 197, 94, 0.05);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(34, 197, 94, 0.1);
+}
+
+/* ─── Skill Tags ─────────────────────────────────────────────── */
+
+.skill-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.1);
+  color: var(--accent-purple);
+}
+
+.skill-tag.matched {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--accent-green);
+}
+
 /* ─── Sidebar Sections ───────────────────────────────────────── */
 
 .sidebar-section {
@@ -1023,6 +1115,13 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
+.onboarding-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  margin-bottom: 12px;
+}
+
 .onboarding-icon {
   font-size: 48px;
   margin-bottom: 12px;
@@ -1038,6 +1137,15 @@ body {
 .onboarding-text {
   font-size: 14px;
   color: var(--text-secondary);
+}
+
+.modal-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  vertical-align: middle;
+  margin-right: 4px;
+}
   margin: 0 0 24px;
   line-height: 1.5;
 }
