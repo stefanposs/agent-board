@@ -8,6 +8,7 @@
   <strong>AI-powered kanban board for VS Code — autonomous agent workflows from idea to merged code.</strong>
 </p>
 
+
 <p align="center">
   <a href="https://github.com/stefanposs/agent-board/actions"><img src="https://github.com/stefanposs/agent-board/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/stefanposs/agent-board/blob/main/LICENSE"><img src="https://img.shields.io/github/license/stefanposs/agent-board" alt="License"></a>
