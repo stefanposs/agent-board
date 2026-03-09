@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useBoard } from '../composables/useBoard'
 import { toggleSimulation } from '../composables/useSimulation'
+import LogoIcon from './LogoIcon.vue'
 
 const { simulationRunning, humanInterventionTasks, totalUsageStats, selectTask } = useBoard()
 
@@ -15,7 +16,7 @@ function formatTokens(n: number): string {
   <header class="app-header">
     <div class="app-header-left">
       <div class="app-logo">
-        <img src="/logo.png" alt="Agent Board" class="app-logo-img" />
+        <LogoIcon :size="28" />
         <span>Agent Board</span>
       </div>
       <span style="font-size: 12px; color: var(--text-muted); border-left: 1px solid var(--border-color); padding-left: 12px;">
@@ -26,10 +27,16 @@ function formatTokens(n: number): string {
       <div
         v-if="humanInterventionTasks.length > 0"
         class="intervention-alert"
+        :class="{ 'escalation-alert': humanInterventionTasks.some(t => t.humanAttentionType === 'escalation') }"
         @click="selectTask(humanInterventionTasks[0].id)"
       >
         <span class="intervention-pulse"></span>
-        <span>👤 {{ humanInterventionTasks.length }} task{{ humanInterventionTasks.length > 1 ? 's' : '' }} need{{ humanInterventionTasks.length === 1 ? 's' : '' }} your attention</span>
+        <span v-if="humanInterventionTasks.some(t => t.humanAttentionType === 'escalation')">
+          🆘 {{ humanInterventionTasks.length }} task{{ humanInterventionTasks.length > 1 ? 's' : '' }} need{{ humanInterventionTasks.length === 1 ? 's' : '' }} your help
+        </span>
+        <span v-else>
+          👤 {{ humanInterventionTasks.length }} task{{ humanInterventionTasks.length > 1 ? 's' : '' }} need{{ humanInterventionTasks.length === 1 ? 's' : '' }} your attention
+        </span>
       </div>
     </div>
     <div class="app-header-right">

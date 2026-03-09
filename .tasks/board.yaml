@@ -6,6 +6,7 @@
 # Each path is scanned for git repos (direct or one level deep).
 workspaces:
   - ~/Repos/examples
+  - ~/Repos
 
 # Agent configuration.
 agents:

@@ -3,7 +3,12 @@
 /** Stage ID — configurable via board.yaml workflow section. */
 export type TaskStage = string
 
-export type AgentRole = 'planner' | 'developer' | 'reviewer' | 'devops' | 'architect'
+/** Agent role — standard roles plus any custom role loaded from agent repos. */
+export type AgentRole = string
+
+/** Well-known agent roles used for stage mappings and fallback routing. */
+export const KNOWN_ROLES = ['planner', 'developer', 'reviewer', 'devops', 'architect'] as const
+export type KnownRole = typeof KNOWN_ROLES[number]
 
 export type AgentStatus = 'idle' | 'working' | 'waiting' | 'blocked'
 
@@ -11,7 +16,7 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 
 export type TaskType = 'feature' | 'bugfix' | 'docs' | 'infra' | 'research' | 'design' | 'ops' | 'other'
 
-export type HumanAttentionType = 'approval' | 'feedback' | 'clarification' | 'review'
+export type HumanAttentionType = 'approval' | 'feedback' | 'clarification' | 'review' | 'decision-confirmation' | 'escalation'
 
 export type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected'
 
@@ -56,6 +61,8 @@ export interface Agent {
   id: string
   name: string
   role: AgentRole
+  /** Display name override for personality mode (e.g. 'Ada' instead of 'Architect') */
+  displayName?: string
   avatar: string
   status: AgentStatus
   currentTaskId: string | null
@@ -71,7 +78,7 @@ export interface Agent {
 export interface TaskEvent {
   id: string
   timestamp: number
-  type: 'stage_change' | 'agent_action' | 'human_action' | 'comment' | 'approval'
+  type: 'stage_change' | 'agent_action' | 'human_action' | 'comment' | 'approval' | 'decision' | 'agent_discussion'
   fromStage?: string
   toStage?: string
   agentId?: string
@@ -95,6 +102,9 @@ export interface Task {
   stage: TaskStage
   priority: TaskPriority
   workspaceId: string
+  /** Primary responsible agent — the agent currently owning this task */
+  assignee?: string | null
+  /** Historical list of all agents that have worked on this task */
   assignedAgents: string[]
   approvalStatus: ApprovalStatus
   events: TaskEvent[]
@@ -113,6 +123,12 @@ export interface Task {
   pullRequest?: PullRequest
   comments: Comment[]
   metrics?: TaskMetrics
+  /** When true, only the assigned agent may pick up this task (manual assignment lock) */
+  manuallyAssigned?: boolean
+  /** Agent decision awaiting human confirmation (HITL gate) */
+  pendingDecision?: PendingDecision
+  /** Inter-agent discussion messages */
+  agentMessages?: AgentMessage[]
 }
 
 export interface Workspace {
@@ -166,15 +182,52 @@ export type AgentDecisionAction =
   | 'approve'              // reviewer: approve and merge
   | 'request-changes'      // reviewer: send back to implementation
   | 'ready-for-implementation' // planner: planning done, move to implementation
+  | 'discuss'              // agent wants to discuss with another agent
+  | 'ask-help'             // agent asks another agent for help (stays responsible)
+  | 'escalate'             // agent needs human help (pauses work, HITL gate)
 
 export interface AgentDecision {
   action: AgentDecisionAction
   reason: string
   questions?: string[]     // for needs-clarification
   confidence: number       // 0-1
+  targetAgent?: string     // for 'discuss' action — which agent role to ask
 }
 
 export const MAX_FEEDBACK_LOOPS = 3
+
+// ─── Human-in-the-Loop (HITL) ───────────────────────────────────
+
+/** A pending agent decision awaiting human confirmation before execution. */
+export interface PendingDecision {
+  id: string
+  decision: AgentDecision
+  agentId: string
+  taskId: string
+  timestamp: number
+  /** Summary context of what the agent did / proposes */
+  context: string
+  /** Proposed target stage (if decision would move the task) */
+  proposedStage?: string
+  /** Human response */
+  status: 'pending' | 'approved' | 'rejected' | 'modified'
+  humanFeedback?: string
+}
+
+// ─── Inter-Agent Discussion ─────────────────────────────────────
+
+/** A message between two agents, visible to the human for oversight. */
+export interface AgentMessage {
+  id: string
+  fromAgentId: string
+  toAgentId: string
+  taskId: string
+  question: string
+  answer?: string
+  timestamp: number
+  answeredAt?: number
+  status: 'pending' | 'answered'
+}
 
 // ─── Sessions ───────────────────────────────────────────────────
 

@@ -94,6 +94,8 @@ function taskToMarkdown(task: TaskData, sessions: SessionData[]): string {
     stage: task.stage,
     priority: task.priority,
     workspaceId: task.workspaceId,
+    assignee: task.assignee,
+    manuallyAssigned: task.manuallyAssigned,
     assignedAgents: task.assignedAgents,
     tags: task.tags,
     progress: task.progress,
@@ -340,6 +342,8 @@ function markdownToTask(content: string): { task: TaskData; sessions: SessionDat
     stage: meta.stage || 'idea',
     priority: meta.priority || 'medium',
     workspaceId: meta.workspaceId || '',
+    assignee: meta.assignee || null,
+    manuallyAssigned: meta.manuallyAssigned || false,
     assignedAgents: meta.assignedAgents || [],
     tags: meta.tags || [],
     progress: meta.progress ?? 0,
@@ -489,5 +493,39 @@ export class MarkdownStateManager {
   /** Get the path to the tasks directory. */
   getTasksDir(): string {
     return this.tasksDir
+  }
+
+  /**
+   * Append a single log entry to a task's markdown file.
+   * Creates a "## Activity Log" section if it doesn't exist.
+   * This enables real-time, lossless logging of every decision,
+   * confirmation, rejection, and agent message.
+   */
+  async appendToTaskLog(taskId: string, entry: string): Promise<void> {
+    await this.init()
+    const files = await fs.readdir(this.tasksDir)
+    const taskFile = files.find(f => f.startsWith(`TASK-${taskId.slice(0, 8)}`))
+    if (!taskFile) return
+
+    const filePath = path.join(this.tasksDir, taskFile)
+    let content = await fs.readFile(filePath, 'utf-8')
+
+    const logHeader = '## Activity Log'
+    if (content.includes(logHeader)) {
+      // Append entry after the header
+      const idx = content.indexOf(logHeader)
+      const afterHeader = idx + logHeader.length
+      const nextNewline = content.indexOf('\n', afterHeader)
+      if (nextNewline >= 0) {
+        content = content.slice(0, nextNewline + 1) + entry + '\n' + content.slice(nextNewline + 1)
+      } else {
+        content += '\n' + entry + '\n'
+      }
+    } else {
+      // Add section at the end
+      content += '\n\n' + logHeader + '\n\n' + entry + '\n'
+    }
+
+    await fs.writeFile(filePath, content, 'utf-8')
   }
 }

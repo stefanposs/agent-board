@@ -232,6 +232,40 @@ export class WebviewProvider {
         return
       }
 
+      case 'confirm-decision': {
+        // HITL: Human confirmed/rejected a decision — log it
+        this.logInfo(`📋 Decision ${msg.approved ? '✅ approved' : '❌ rejected'} for task ${msg.taskId} (decision: ${msg.decisionId})${msg.feedback ? ` — feedback: "${msg.feedback}"` : ''}`)
+        // Markdown logging: append to task log if mdState available
+        if (this.mdState) {
+          const action = msg.approved ? '✅ Approved' : '❌ Rejected'
+          const ts = new Date().toISOString()
+          const entry = `- [${ts}] 👤 human: ${action}${msg.feedback ? ` — "${msg.feedback}"` : ''}`
+          try {
+            await this.mdState.appendToTaskLog(msg.taskId, entry)
+          } catch {
+            // appendToTaskLog may not exist yet — graceful fallback
+          }
+        }
+        return
+      }
+
+      case 'show-notification': {
+        // HITL: Show VS Code native notification when agent needs human attention
+        const actions = ['Show Task']
+        let result: string | undefined
+        if (msg.severity === 'error') {
+          result = await vscode.window.showErrorMessage(`${msg.title}: ${msg.body}`, ...actions)
+        } else if (msg.severity === 'warning') {
+          result = await vscode.window.showWarningMessage(`${msg.title}: ${msg.body}`, ...actions)
+        } else {
+          result = await vscode.window.showInformationMessage(`${msg.title}: ${msg.body}`, ...actions)
+        }
+        if (result === 'Show Task') {
+          this.post({ type: 'notification-action', action: 'show-task' })
+        }
+        return
+      }
+
       case 'open-folder': {
         const uri = vscode.Uri.file(msg.path)
         return vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true })
@@ -852,6 +886,7 @@ export function hello() {
     const distUri = vscode.Uri.joinPath(this.ctx.extensionUri, 'dist', 'webview')
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'main.js'))
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'main.css'))
+    const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'logo.png'))
     const nonce = getNonce()
 
     return /* html */ `<!DOCTYPE html>
@@ -871,6 +906,7 @@ export function hello() {
 </head>
 <body>
   <div id="app"></div>
+  <script nonce="${nonce}">window.__LOGO_URI__ = "${logoUri}";</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`

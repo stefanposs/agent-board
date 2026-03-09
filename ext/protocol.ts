@@ -50,6 +50,10 @@ export interface TaskData {
   stage: string
   priority: string
   workspaceId: string
+  /** Primary responsible agent ID */
+  assignee?: string | null
+  /** When true, only the assigned agent may pick up this task */
+  manuallyAssigned?: boolean
   assignedAgents: string[]
   approvalStatus: string
   events: any[]
@@ -93,6 +97,8 @@ export type WebviewMessage =
   | { type: 'detect-backends' }
   | { type: 'set-default-backend'; backendId: string }
   | { type: 'set-agent-backend'; agentId: string; backendId: string }
+  | { type: 'confirm-decision'; taskId: string; decisionId: string; approved: boolean; feedback?: string }
+  | { type: 'show-notification'; title: string; body: string; severity: 'info' | 'warning' | 'error' }
 
 export interface BoardSettingsDto {
   workspacePaths: string[]
@@ -194,6 +200,7 @@ export type ExtensionMessage =
   | { type: 'state-loaded'; tasks: TaskData[]; sessions: SessionData[] }
   | { type: 'state-saved' }
   | { type: 'backends-detected'; backends: BackendInfo[] }
+  | { type: 'notification-action'; action: string; taskId?: string }
 
 export interface InitData {
   workspaces: ScannedWorkspace[]
@@ -230,6 +237,10 @@ export interface AgentConfig {
   temperature: number
   maxContextTokens: number
   systemPrompt: string
+  /** Technical skills this agent excels at, e.g. 'api-design', 'testing', 'flutter' */
+  skills?: string[]
+  /** Programming languages this agent can work with, e.g. 'python', 'golang' */
+  languages?: string[]
   executionMode?: 'cli' | 'llm-api'
   backend?: BackendId | 'auto'
 }

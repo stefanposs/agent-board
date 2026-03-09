@@ -33,6 +33,47 @@
   box-sizing: border-box;
 }
 
+/* ─── HITL & Attention Animations ────────────────────────────── */
+
+@keyframes attention-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-4px) rotate(-0.5deg); }
+  30% { transform: translateX(4px) rotate(0.5deg); }
+  45% { transform: translateX(-3px); }
+  60% { transform: translateX(3px); }
+  75% { transform: translateX(-1px); }
+}
+
+@keyframes attention-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 0 16px 4px rgba(245, 158, 11, 0.2); }
+}
+
+@keyframes attention-border-pulse {
+  0%, 100% { border-color: rgba(245, 158, 11, 0.3); }
+  50% { border-color: rgba(245, 158, 11, 0.7); }
+}
+
+.needs-immediate-attention {
+  animation: attention-shake 0.6s ease-in-out 1, attention-glow 2s ease-in-out infinite;
+}
+
+/* Pending decision count badge in header/sidebar */
+.pending-decisions-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent-yellow);
+  color: #0f1117;
+  font-size: 11px;
+  font-weight: 700;
+  animation: attention-border-pulse 2s ease-in-out infinite;
+}
+
 html, body, #app {
   height: 100%;
   width: 100%;
@@ -1118,7 +1159,6 @@ body {
 .onboarding-logo {
   width: 64px;
   height: 64px;
-  object-fit: contain;
   margin-bottom: 12px;
 }
 
@@ -1144,7 +1184,6 @@ body {
 .modal-logo {
   width: 20px;
   height: 20px;
-  object-fit: contain;
   vertical-align: middle;
   margin-right: 4px;
 }

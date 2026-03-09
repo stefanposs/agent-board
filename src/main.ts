@@ -5,7 +5,7 @@ import { useExtension } from './composables/useExtension'
 import { useBoard } from './composables/useBoard'
 import { useWorkflow } from './composables/useWorkflow'
 import { debouncedSave, loadFromLocalStorage, initAutoSave } from './composables/usePersistence'
-import type { AgentDecision } from './domain/types'
+import type { AgentDecision, PendingDecision, Agent } from './domain/types'
 import { MAX_FEEDBACK_LOOPS } from './domain/types'
 
 const app = createApp(App)
@@ -205,24 +205,10 @@ board.onTaskMoved((taskId, fromStage, toStage, task) => {
     // Workflow-driven agent triggering: find which roles should run for this stage
     const eligibleRoles = wf.getAgentRolesForStage(toStage)
     if (eligibleRoles.length > 0 && !wf.isFinalStage(toStage)) {
-      // Try each role in order; trigger the first matching agent
-      for (const role of eligibleRoles) {
-        try {
-          if (role === 'planner' || role === 'architect') {
-            triggerPlannerAgent(taskId, task)
-            break
-          } else if (role === 'developer' || role === 'devops') {
-            board.addToast(`🔧 Triggering ${role} agent for "${task.title}"...`, 'info')
-            triggerDeveloperAgent(taskId, task)
-            break
-          } else if (role === 'reviewer') {
-            board.addToast(`🔍 Triggering reviewer agent for "${task.title}"...`, 'info')
-            triggerReviewerAgent(taskId, task)
-            break
-          }
-        } catch (err) {
-          board.addToast(`❌ Agent trigger error (${role}): ${err instanceof Error ? err.message : String(err)}`, 'error')
-        }
+      try {
+        triggerBestAgent(taskId, task, eligibleRoles)
+      } catch (err) {
+        board.addToast(`❌ Agent trigger error: ${err instanceof Error ? err.message : String(err)}`, 'error')
       }
     }
 
@@ -257,6 +243,7 @@ function parseAgentDecision(content: string): AgentDecision | null {
             reason: parsed.reason || '',
             questions: parsed.questions || [],
             confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+            targetAgent: parsed.targetAgent || undefined,
           }
         }
       } catch {
@@ -268,7 +255,9 @@ function parseAgentDecision(content: string): AgentDecision | null {
 }
 
 /**
- * Act on a parsed agent decision — move tasks between stages autonomously.
+ * Act on a parsed agent decision — ALL decisions now require human confirmation (HITL).
+ * Instead of auto-advancing, the decision is stored as `pendingDecision` on the task.
+ * The human must confirm/reject via the HITL gate UI before any action is executed.
  */
 function handleAgentDecision(agentId: string, taskId: string, decision: AgentDecision) {
   const task = board.tasks.value.find((t) => t.id === taskId)
@@ -277,121 +266,288 @@ function handleAgentDecision(agentId: string, taskId: string, decision: AgentDec
   const agent = board.agents.value.find((a) => a.id === agentId)
   const agentName = agent?.name || agentId
 
+  // ─── Handle 'discuss' action: inter-agent communication ───
+  if (decision.action === 'discuss' && decision.targetAgent) {
+    const targetRole = decision.targetAgent
+    const targetAgent = board.agents.value.find(a => a.role === targetRole || a.id === targetRole)
+    if (targetAgent && decision.questions?.length) {
+      for (const q of decision.questions) {
+        board.addAgentMessage(agentId, targetAgent.id, taskId, q)
+      }
+      board.addToast(`💬 ${agentName} wants to discuss with ${targetAgent.name}`, 'info')
+      // Discussion also needs human approval before agent response is triggered
+      const context = `${agentName} wants to discuss with ${targetAgent.name}:\n${decision.questions.map(q => `• ${q}`).join('\n')}`
+      board.setPendingDecision(taskId, decision, agentId, context)
+      notifyHumanAttention(task, 'decision-confirmation')
+    }
+    return
+  }
+
+  // ─── Handle 'ask-help' action: agent stays responsible, asks colleague for help ───
+  if (decision.action === 'ask-help' && decision.targetAgent) {
+    const targetRole = decision.targetAgent
+    const targetAgent = board.agents.value.find(a => a.role === targetRole || a.id === targetRole)
+    if (targetAgent && decision.questions?.length) {
+      for (const q of decision.questions) {
+        board.addAgentMessage(agentId, targetAgent.id, taskId, q)
+      }
+      board.addToast(`🤝 ${agentName} asks ${targetAgent.name} for help`, 'info')
+      board.addActivity(
+        `🤝 **${agentName}** asks **${targetAgent.name}** for help on "${task.title}"`,
+        'agent_discussion',
+      )
+      // Auto-trigger the helper agent — no HITL gate for agent-to-agent help
+      if (ext.isWebview.value) {
+        const ws = board.workspaces.value.find(w => w.id === task.workspaceId)
+        const questions = decision.questions.join('\n')
+        const helpPrompt = `${agentName} (${board.getAgent(agentId)?.role || 'agent'}) needs your help on task "${task.title}":\n\n${questions}\n\nTask description: ${task.description || '(none)'}\n\nPlease provide your expertise. The requesting agent remains the owner of this task — you are providing assistance only.`
+        const session = board.getOrCreateSession(taskId, targetAgent.id)
+        board.addSessionMessage(session.id, 'user', helpPrompt)
+        ext.runAgent(targetAgent.id, taskId, helpPrompt, [], ws?.localPath, task.branch)
+        if (!task.assignedAgents.includes(targetAgent.id)) {
+          task.assignedAgents.push(targetAgent.id)
+        }
+      }
+    }
+    return
+  }
+
+  // ─── Handle 'escalate' action: agent needs human help (HITL gate) ───
+  if (decision.action === 'escalate') {
+    const questions = decision.questions?.map(q => `• ${q}`).join('\n') || ''
+    const context = `🆘 **${agentName}** needs your help!\n\n**Reason:** ${decision.reason}\n${questions ? `\n**Questions:**\n${questions}` : ''}\n\nThe agent has paused work and is waiting for your guidance. Please answer the questions or provide direction, then approve to let the agent continue.`
+    board.setPendingDecision(taskId, decision, agentId, context)
+    task.humanAttentionType = 'escalation'
+    notifyHumanAttention(task, 'escalation')
+    debouncedSave()
+    return
+  }
+
+  // ─── Build context summary for the HITL gate ───
+  let context = ''
+  let proposedStage: string | undefined
+
   switch (decision.action) {
     case 'needs-clarification': {
-      // Developer needs answers → move backward (to a previous stage)
       const loops = task.metrics?.feedbackLoops?.devToPlanner ?? 0
       if (loops >= MAX_FEEDBACK_LOOPS) {
-        board.addToast(`🚫 "${task.title}": Max ${MAX_FEEDBACK_LOOPS} feedback loops reached — human review needed`, 'warning')
-        board.addComment(taskId, `⚠️ **Loop limit reached** (${MAX_FEEDBACK_LOOPS}x feedback). Manual intervention required.\n\nLast questions:\n${(decision.questions || []).map(q => `- ${q}`).join('\n')}`, agentId)
+        board.addToast(`🚫 "${task.title}": Max ${MAX_FEEDBACK_LOOPS} feedback loops reached — decide manually`, 'warning')
         return
       }
-
-      // Store questions as comment
-      if (decision.questions?.length) {
-        board.addComment(
-          taskId,
-          `**🔄 Agent questions:**\n${decision.questions.map((q) => `- ${q}`).join('\n')}\n\n_Reason: ${decision.reason}_`,
-          agentId,
-        )
-      }
-
-      // Increment loop counter
-      if (task.metrics?.feedbackLoops) {
-        task.metrics.feedbackLoops.devToPlanner++
-      }
-
-      // Find a backward transition (non-final, non-approval) from current stage
-      const backwardTransition = wf.getValidTransitions(task.stage)
-        .find(t => !t.requiresApproval && !wf.isFinalStage(t.to))
-      if (backwardTransition) {
-        const targetLabel = wf.getStageConfig(backwardTransition.to)?.label ?? backwardTransition.to
-        board.addToast(`🔄 ${agentName}: Questions → back to ${targetLabel}`, 'info')
-        board.moveTask(taskId, backwardTransition.to, 'agent', agentId)
-      }
+      const backward = wf.getValidTransitions(task.stage).find(t => !t.requiresApproval && !wf.isFinalStage(t.to))
+      proposedStage = backward?.to
+      const targetLabel = proposedStage ? (wf.getStageConfig(proposedStage)?.label ?? proposedStage) : '(unknown)'
+      context = `${agentName} needs clarification and proposes moving back to **${targetLabel}**.\n\nQuestions:\n${(decision.questions || []).map(q => `• ${q}`).join('\n')}\n\nReason: ${decision.reason}`
       break
     }
-
     case 'move-to-review': {
-      // Agent done → move forward to the next stage (typically review)
-      const forwardTransition = wf.getValidTransitions(task.stage)
-        .find(t => !t.requiresApproval && t.trigger !== 'human' && t.from !== t.to)
-      if (forwardTransition) {
-        const targetLabel = wf.getStageConfig(forwardTransition.to)?.label ?? forwardTransition.to
-        board.addComment(taskId, `✅ **Work complete**\n\n_${decision.reason}_\n\nConfidence: ${Math.round(decision.confidence * 100)}%`, agentId)
-        board.addToast(`✅ ${agentName}: Done → ${targetLabel}`, 'success')
-        board.moveTask(taskId, forwardTransition.to, 'agent', agentId)
-      }
+      const forward = wf.getValidTransitions(task.stage).find(t => !t.requiresApproval && t.trigger !== 'human' && t.from !== t.to)
+      proposedStage = forward?.to
+      const targetLabel = proposedStage ? (wf.getStageConfig(proposedStage)?.label ?? proposedStage) : '(unknown)'
+      context = `${agentName} completed work and proposes moving to **${targetLabel}**.\n\nReason: ${decision.reason}\nConfidence: ${Math.round(decision.confidence * 100)}%`
       break
     }
-
     case 'implement': {
-      // Agent analyzed and will continue (no stage change)
-      board.addToast(`⚙️ ${agentName}: Working...`, 'info')
+      context = `${agentName} is working on implementation.\n\nReason: ${decision.reason}\nConfidence: ${Math.round(decision.confidence * 100)}%`
       break
     }
-
     case 'ready-for-implementation': {
-      // Planner done → move forward to the next stage
-      const nextTransition = wf.getValidTransitions(task.stage)
-        .find(t => !t.requiresApproval && t.trigger !== 'human' && t.from !== t.to)
-      if (nextTransition) {
-        const targetLabel = wf.getStageConfig(nextTransition.to)?.label ?? nextTransition.to
-        board.addComment(taskId, `✅ **Planning complete**\n\n_${decision.reason}_\n\nConfidence: ${Math.round(decision.confidence * 100)}%`, agentId)
-        board.addToast(`✅ ${agentName}: Done → ${targetLabel}`, 'success')
-        board.moveTask(taskId, nextTransition.to, 'agent', agentId)
+      const next = wf.getValidTransitions(task.stage).find(t => !t.requiresApproval && t.trigger !== 'human' && t.from !== t.to)
+      proposedStage = next?.to
+      const targetLabel = proposedStage ? (wf.getStageConfig(proposedStage)?.label ?? proposedStage) : '(unknown)'
+      context = `${agentName} completed planning and proposes moving to **${targetLabel}**.\n\nReason: ${decision.reason}\nConfidence: ${Math.round(decision.confidence * 100)}%`
+      break
+    }
+    case 'approve': {
+      const approval = wf.getValidTransitions(task.stage).find(t => t.requiresApproval)
+      proposedStage = approval?.to
+      const targetLabel = proposedStage ? (wf.getStageConfig(proposedStage)?.label ?? proposedStage) : '(unknown)'
+      context = `${agentName} approves and proposes moving to **${targetLabel}**.\n\nReason: ${decision.reason}\nConfidence: ${Math.round(decision.confidence * 100)}%`
+      break
+    }
+    case 'request-changes': {
+      const loops = task.metrics?.feedbackLoops?.reviewToDev ?? 0
+      if (loops >= MAX_FEEDBACK_LOOPS) {
+        board.addToast(`🚫 "${task.title}": Max ${MAX_FEEDBACK_LOOPS} review loops reached — decide manually`, 'warning')
+        return
+      }
+      const reject = wf.getValidTransitions(task.stage).find(t => !t.requiresApproval && !wf.isFinalStage(t.to))
+      proposedStage = reject?.to
+      const targetLabel = proposedStage ? (wf.getStageConfig(proposedStage)?.label ?? proposedStage) : '(unknown)'
+      context = `${agentName} requests changes and proposes moving back to **${targetLabel}**.\n\nReason: ${decision.reason}\n${decision.questions?.length ? `\nIssues:\n${decision.questions.map(q => `• ${q}`).join('\n')}` : ''}`
+      break
+    }
+  }
+
+  // Store as pending decision — human must confirm
+  board.setPendingDecision(taskId, decision, agentId, context, proposedStage)
+  notifyHumanAttention(task, 'decision-confirmation')
+  debouncedSave()
+}
+
+/**
+ * Execute a confirmed (approved) decision.
+ * Called after the human clicks "Approve" in the HITL gate.
+ */
+function executeConfirmedDecision(pd: PendingDecision) {
+  const task = board.tasks.value.find(t => t.id === pd.taskId)
+  if (!task) return
+
+  const agentName = board.getAgent(pd.agentId)?.name || pd.agentId
+
+  switch (pd.decision.action) {
+    case 'needs-clarification': {
+      if (pd.decision.questions?.length) {
+        board.addComment(pd.taskId, `**🔄 Agent questions:**\n${pd.decision.questions.map(q => `- ${q}`).join('\n')}\n\n_Reason: ${pd.decision.reason}_`, pd.agentId)
+      }
+      if (task.metrics?.feedbackLoops) task.metrics.feedbackLoops.devToPlanner++
+      if (pd.proposedStage) {
+        board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
       }
       break
     }
-
+    case 'move-to-review': {
+      board.addComment(pd.taskId, `✅ **Work complete**\n\n_${pd.decision.reason}_\n\nConfidence: ${Math.round(pd.decision.confidence * 100)}%`, pd.agentId)
+      if (pd.proposedStage) {
+        board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
+      }
+      break
+    }
+    case 'implement': {
+      board.addToast(`⚙️ ${agentName}: Continuing work...`, 'info')
+      break
+    }
+    case 'ready-for-implementation': {
+      board.addComment(pd.taskId, `✅ **Planning complete**\n\n_${pd.decision.reason}_\n\nConfidence: ${Math.round(pd.decision.confidence * 100)}%`, pd.agentId)
+      if (pd.proposedStage) {
+        board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
+      }
+      break
+    }
     case 'approve': {
-      // Reviewer approves → find the approval-gated transition
-      const approvalTransition = wf.getValidTransitions(task.stage)
-        .find(t => t.requiresApproval)
-      if (approvalTransition) {
-        const targetLabel = wf.getStageConfig(approvalTransition.to)?.label ?? approvalTransition.to
-        board.addComment(taskId, `✅ **Review approved**\n\n_${decision.reason}_`, agentId)
-        board.addToast(`✅ ${agentName}: Approved → ${targetLabel}`, 'success')
-        board.moveTask(taskId, approvalTransition.to, 'agent', agentId)
+      board.addComment(pd.taskId, `✅ **Review approved**\n\n_${pd.decision.reason}_`, pd.agentId)
+      if (pd.proposedStage) {
+        board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
         task.approvalStatus = 'approved'
       }
       break
     }
-
     case 'request-changes': {
-      // Reviewer rejects → move backward to a non-final, non-approval stage
-      const loops = task.metrics?.feedbackLoops?.reviewToDev ?? 0
-      if (loops >= MAX_FEEDBACK_LOOPS) {
-        board.addToast(`🚫 "${task.title}": Max ${MAX_FEEDBACK_LOOPS} review loops reached — human review needed`, 'warning')
-        board.addComment(taskId, `⚠️ **Loop limit reached** (${MAX_FEEDBACK_LOOPS}x review). Manual intervention required.\n\n_${decision.reason}_`, agentId)
-        return
-      }
-
-      board.addComment(
-        taskId,
-        `🔄 **Changes requested:**\n\n_${decision.reason}_${decision.questions?.length ? `\n\nPunkte:\n${decision.questions.map((q) => `- ${q}`).join('\n')}` : ''}`,
-        agentId,
-      )
-
-      if (task.metrics?.feedbackLoops) {
-        task.metrics.feedbackLoops.reviewToDev++
-      }
-
-      // Find backward/rejection transition
-      const rejectTransition = wf.getValidTransitions(task.stage)
-        .find(t => !t.requiresApproval && !wf.isFinalStage(t.to))
-      if (rejectTransition) {
-        const targetLabel = wf.getStageConfig(rejectTransition.to)?.label ?? rejectTransition.to
-        board.addToast(`🔄 ${agentName}: Changes requested → back to ${targetLabel}`, 'info')
-        board.moveTask(taskId, rejectTransition.to, 'agent', agentId)
+      board.addComment(pd.taskId, `🔄 **Changes requested:**\n\n_${pd.decision.reason}_${pd.decision.questions?.length ? `\n\nPunkte:\n${pd.decision.questions.map(q => `- ${q}`).join('\n')}` : ''}`, pd.agentId)
+      if (task.metrics?.feedbackLoops) task.metrics.feedbackLoops.reviewToDev++
+      if (pd.proposedStage) {
+        board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
         task.approvalStatus = 'rejected'
       }
+      break
+    }
+    case 'discuss': {
+      // Discussion was already recorded when the decision was created
+      // Now trigger the target agent to respond
+      const targetRole = pd.decision.targetAgent
+      if (targetRole) {
+        const targetAgent = board.agents.value.find(a => a.role === targetRole || a.id === targetRole)
+        if (targetAgent && ext.isWebview.value) {
+          const ws = board.workspaces.value.find(w => w.id === task.workspaceId)
+          const questions = pd.decision.questions?.join('\n') || ''
+          const fromAgent = board.getAgent(pd.agentId)
+          const prompt = `${fromAgent?.name || pd.agentId} (${fromAgent?.role || 'agent'}) has a question for you about task "${task.title}":\n\n${questions}\n\nPlease answer their questions based on your expertise and the task context.`
+          const session = board.getOrCreateSession(pd.taskId, targetAgent.id)
+          board.addSessionMessage(session.id, 'user', prompt)
+          ext.runAgent(targetAgent.id, pd.taskId, prompt, [], ws?.localPath, task.branch)
+        }
+      }
+      break
+    }
+    case 'escalate': {
+      // Human provided feedback/answers — re-trigger the assignee agent with the guidance
+      const assigneeAgent = task.assignee ? board.getAgent(task.assignee) : board.getAgent(pd.agentId)
+      if (assigneeAgent && ext.isWebview.value) {
+        const ws = board.workspaces.value.find(w => w.id === task.workspaceId)
+        const humanGuidance = pd.humanFeedback || '(no specific feedback provided)'
+        const resumePrompt = `You previously escalated task "${task.title}" to the human for help.\n\nYour original questions/reason:\n${pd.decision.reason}\n${pd.decision.questions?.map(q => `• ${q}`).join('\n') || ''}\n\n**Human response:**\n${humanGuidance}\n\nPlease continue working on the task with this guidance.`
+        const session = board.getOrCreateSession(pd.taskId, assigneeAgent.id)
+        board.addSessionMessage(session.id, 'user', resumePrompt)
+        ext.runAgent(assigneeAgent.id, pd.taskId, resumePrompt, [], ws?.localPath, task.branch)
+        board.addToast(`🤖 ${assigneeAgent.name} resuming work with your guidance`, 'success')
+      }
+      task.humanAttentionType = undefined
       break
     }
   }
 
   debouncedSave()
 }
+
+// ─── Notification / Feedback System ─────────────────────────
+
+/** Audio context for notification sounds (created on first use). */
+let audioCtx: AudioContext | null = null
+
+function playNotificationSound(type: 'attention' | 'success' | 'error' = 'attention') {
+  try {
+    if (!audioCtx) audioCtx = new AudioContext()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+
+    const now = audioCtx.currentTime
+    gain.gain.setValueAtTime(0.15, now)
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5)
+
+    if (type === 'attention') {
+      osc.frequency.setValueAtTime(880, now)
+      osc.frequency.setValueAtTime(1100, now + 0.1)
+      osc.frequency.setValueAtTime(880, now + 0.2)
+    } else if (type === 'success') {
+      osc.frequency.setValueAtTime(523, now)
+      osc.frequency.setValueAtTime(659, now + 0.1)
+      osc.frequency.setValueAtTime(784, now + 0.2)
+    } else {
+      osc.frequency.setValueAtTime(440, now)
+      osc.frequency.setValueAtTime(330, now + 0.15)
+    }
+
+    osc.start(now)
+    osc.stop(now + 0.5)
+  } catch {
+    // Audio not supported or blocked — silently ignore
+  }
+}
+
+function notifyHumanAttention(task: { id: string; title: string }, type: string) {
+  // 1. Sound notification
+  playNotificationSound(type === 'decision-confirmation' ? 'attention' : 'success')
+
+  // 2. VS Code notification (if in webview)
+  if (ext.isWebview.value) {
+    ext.post({
+      type: 'show-notification',
+      title: '🔔 Agent Board — Action Required',
+      body: `"${task.title}" needs your attention: ${type}`,
+      severity: 'warning',
+    })
+  }
+
+  // 3. Browser title flash
+  if (typeof document !== 'undefined') {
+    const originalTitle = document.title
+    let flash = true
+    const interval = setInterval(() => {
+      document.title = flash ? `🔔 Action Required — ${task.title}` : originalTitle
+      flash = !flash
+    }, 1000)
+    setTimeout(() => {
+      clearInterval(interval)
+      document.title = originalTitle
+    }, 10000)
+  }
+}
+
+// Expose executeConfirmedDecision for use in components
+;(window as any).__agentBoard_executeConfirmedDecision = executeConfirmedDecision
+;(window as any).__agentBoard_notifyHumanAttention = notifyHumanAttention
 
 // ─── Decision instruction appended to agent prompts ─────────
 
@@ -410,6 +566,9 @@ IMPORTANT: After your planning and analysis, you MUST include a structured decis
 Decision guide:
 - "ready-for-implementation": Planning is complete. The task will automatically move to Implementation and a Developer agent will start working.
 - "needs-clarification": You need more information from the user/developer before planning can be completed. List questions in "questions" array.
+- "discuss": You want to ask another agent a question. Set "targetAgent" to the role (e.g. "developer", "reviewer") and list questions in "questions" array.
+- "ask-help": You need input from another agent but remain responsible for this task. Set "targetAgent" and list questions. The helper agent will respond directly — no human approval needed.
+- "escalate": You are stuck and need the human's help to continue. List your questions/blockers in "questions". Work will pause until the human responds.
 `
 
 const DECISION_INSTRUCTION_DEVELOPER = `
@@ -418,10 +577,11 @@ After your code changes (using the file:path format you were instructed about), 
 
 \`\`\`decision
 {
-  "action": "implement" | "needs-clarification" | "move-to-review",
+  "action": "implement" | "needs-clarification" | "move-to-review" | "discuss" | "ask-help" | "escalate",
   "reason": "Brief explanation of your decision",
   "questions": ["question 1", "question 2"],
-  "confidence": 0.85
+  "confidence": 0.85,
+  "targetAgent": "planner"
 }
 \`\`\`
 
@@ -429,6 +589,9 @@ Decision guide:
 - "needs-clarification": You have unanswered questions that block implementation. List them in "questions". The task will go back to the Planner agent.
 - "implement": You are currently working on the implementation but it's not complete yet (rare — prefer move-to-review when done).
 - "move-to-review": Implementation is complete and ready for code review.
+- "discuss": You want to ask another agent a question. Set "targetAgent" to the role (e.g. "planner", "reviewer") and list questions in "questions" array.
+- "ask-help": You need input from another agent but remain responsible for this task. Set "targetAgent" and list questions. The helper agent will respond directly.
+- "escalate": You are stuck and need the human's help. List blockers in "questions". Work pauses until they respond.
 `
 
 const DECISION_INSTRUCTION_REVIEWER = `
@@ -437,25 +600,86 @@ IMPORTANT: After your review, you MUST include a structured decision block at th
 
 \`\`\`decision
 {
-  "action": "approve" | "request-changes",
+  "action": "approve" | "request-changes" | "discuss" | "ask-help" | "escalate",
   "reason": "Brief explanation of your decision",
   "questions": ["issue 1", "issue 2"],
-  "confidence": 0.9
+  "confidence": 0.9,
+  "targetAgent": "developer"
 }
 \`\`\`
 
 Decision guide:
 - "approve": Code is correct, follows conventions, and is ready to merge.
 - "request-changes": Issues found that need fixing. List them in "questions". The task will go back to the Developer agent.
+- "discuss": You want to ask another agent a question. Set "targetAgent" to the role (e.g. "developer", "planner") and list questions in "questions" array.
+- "ask-help": You need input from another agent for your review. Set "targetAgent" and list questions.
+- "escalate": You need the human's judgment on something. List concerns in "questions". Work pauses until they respond.
 `
+
+/**
+ * Unified agent trigger: if the task has an assignee, use that agent directly.
+ * Otherwise find the best agent based on skills + roles, then dispatch to the
+ * appropriate prompt builder.
+ */
+function triggerBestAgent(
+  taskId: string,
+  task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string },
+  eligibleRoles: string[],
+) {
+  const taskObj = board.tasks.value.find((t) => t.id === taskId)
+
+  // 1. If an assignee is set, use that agent directly (like a real team — you pick who works)
+  let agent: Agent | null = null
+  if (taskObj?.assignee) {
+    agent = board.getAgent(taskObj.assignee) || null
+    if (agent) {
+      board.addToast(`🤖 ${agent.displayName || agent.name} picks up "${task.title}" (assigned)`, 'info')
+    }
+  }
+
+  // 2. Fallback: skill-based matching
+  if (!agent) {
+    agent = board.getBestAgentForTask(board.agents.value, eligibleRoles, taskObj || task as any)
+  }
+
+  if (!agent) {
+    board.addToast(`❌ No agent found for roles [${eligibleRoles.join(', ')}] (${board.agents.value.length} agents total)`, 'error')
+    return
+  }
+
+  // Auto-assign as assignee if none set
+  if (taskObj && !taskObj.assignee) {
+    taskObj.assignee = agent.id
+    if (!taskObj.assignedAgents.includes(agent.id)) {
+      taskObj.assignedAgents.push(agent.id)
+    }
+  }
+
+  // Route to the correct prompt builder based on the agent's role
+  const plannerRoles = ['planner', 'architect']
+  const devRoles = ['developer', 'devops']
+  const reviewerRoles = ['reviewer']
+
+  if (plannerRoles.includes(agent.role)) {
+    triggerPlannerAgent(taskId, task, agent)
+  } else if (devRoles.includes(agent.role)) {
+    triggerDeveloperAgent(taskId, task, agent)
+  } else if (reviewerRoles.includes(agent.role)) {
+    triggerReviewerAgent(taskId, task, agent)
+  } else {
+    // Unknown role — use developer prompt as default
+    board.addToast(`🤖 Triggering ${agent.name} (role: ${agent.role}) for "${task.title}"...`, 'info')
+    triggerDeveloperAgent(taskId, task, agent)
+  }
+}
 
 /**
  * Run the planner agent on a task. Called automatically on move-to-planning,
  * or manually via the "Run Planner" button in TaskDetail.
  */
-function triggerPlannerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }) {
+function triggerPlannerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }, preselectedAgent?: any) {
   const allAgents = board.agents.value
-  const plannerAgent = allAgents.find(
+  const plannerAgent = preselectedAgent || allAgents.find(
     (a) => a.role === 'planner' || a.role === 'architect',
   )
 
@@ -513,9 +737,9 @@ function triggerPlannerAgent(taskId: string, task: { title: string; description?
  * Run a developer agent on a task entering implementation.
  * Picks the first idle developer (or devops as fallback).
  */
-function triggerDeveloperAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }) {
+function triggerDeveloperAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }, preselectedAgent?: any) {
   const allAgents = board.agents.value
-  const devAgent =
+  const devAgent = preselectedAgent ||
     allAgents.find((a) => a.role === 'developer' && a.status === 'idle') ||
     allAgents.find((a) => a.role === 'developer') ||
     allAgents.find((a) => a.role === 'devops' && a.status === 'idle') ||
@@ -580,9 +804,9 @@ function triggerDeveloperAgent(taskId: string, task: { title: string; descriptio
 /**
  * Run a reviewer agent on a task entering review.
  */
-function triggerReviewerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; branch?: string }) {
+function triggerReviewerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; branch?: string }, preselectedAgent?: any) {
   const allAgents = board.agents.value
-  const reviewAgent =
+  const reviewAgent = preselectedAgent ||
     allAgents.find((a) => a.role === 'reviewer' && a.status === 'idle') ||
     allAgents.find((a) => a.role === 'reviewer')
 
