@@ -2,7 +2,7 @@
   "name": "agent-board",
   "displayName": "Agent Board",
   "description": "Visual AI agent workflow orchestration — Kanban board for multi-agent development",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "publisher": "stefanposs",
   "license": "MIT",
@@ -129,7 +129,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "deploy": "npm run build:all && cp dist/extension.cjs ~/.vscode/extensions/stefanposs.agent-board-0.1.0/dist/extension.cjs && cp dist/webview/main.js ~/.vscode/extensions/stefanposs.agent-board-0.1.0/dist/webview/main.js && cp dist/webview/main.css ~/.vscode/extensions/stefanposs.agent-board-0.1.0/dist/webview/main.css && echo '✅ Deployed to installed extension'",
+    "deploy": "npm run build:all && cp -r dist/extension.cjs dist/webview ~/.vscode/extensions/stefanposs.agent-board-0.3.0/dist/ && echo '✅ Deployed to installed extension'",
     "watch:ext": "node esbuild.ext.mjs --watch",
     "package": "npm run build:all && npx @vscode/vsce package --no-dependencies",
     "preview": "vite preview"

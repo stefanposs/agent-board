@@ -5,6 +5,9 @@ import { useExtension } from '../composables/useExtension'
 import { useWorkflow } from '../composables/useWorkflow'
 import type { Agent } from '../domain'
 import { debouncedSave } from '../composables/usePersistence'
+import TaskHITLGate from './TaskHITLGate.vue'
+import TaskAgentDiscussion from './TaskAgentDiscussion.vue'
+import TaskStepTimeline from './TaskStepTimeline.vue'
 
 const props = defineProps<{
   taskId: string
@@ -15,7 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const board = useBoard()
-const { tasks, getAgent, getWorkspace, approveTask, rejectTask, moveTask, selectTask, agents, openAgentPanel, getTaskSessions, slugifyBranchName, isExtensionMode, workspaces, addComment, deleteComment, addAgentQuestion, answerAgentQuestion, getBestAgentForTask } = board
+const { tasks, getAgent, getWorkspace, approveTask, rejectTask, moveTask, selectTask, agents, openAgentPanel, getTaskSessions, slugifyBranchName, isExtensionMode, workspaces, addComment, deleteComment, addAgentQuestion, answerAgentQuestion, getBestAgentForTask, assignAgent, reassignAgent, suggestAgents } = board
 const ext = useExtension()
 const wf = useWorkflow()
 
@@ -401,8 +404,11 @@ function formatOutput(text: string): string {
         </div>
       </div>
 
+      <!-- ─── HITL Gate: Agent Decision Awaiting Confirmation ─── -->
+      <TaskHITLGate :taskId="props.taskId" />
+
       <!-- ─── Status Banner: Human Attention Required ─── -->
-      <div v-if="hasApprovalGate && task.approvalStatus === 'pending'" class="status-banner status-attention">
+      <div v-if="hasApprovalGate && task.approvalStatus === 'pending' && !task.pendingDecision" class="status-banner status-attention">
         <span class="status-icon">⚠️</span>
         <div class="status-text">
           <div class="status-label">
@@ -502,6 +508,49 @@ function formatOutput(text: string): string {
           </div>
         </div>
 
+        <!-- Assignee (Primary Responsible Agent) -->
+        <div class="detail-section">
+          <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">
+            <span>👤 Assignee</span>
+          </div>
+          <div v-if="task.assignee && getAgent(task.assignee)" class="agent-row" style="margin-bottom: 8px;">
+            <div class="agent-avatar" :style="{ background: (getAgent(task.assignee!)?.color || '#666') + '20' }">
+              {{ getAgent(task.assignee!)?.avatar }}
+            </div>
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="agent-name">{{ getAgent(task.assignee!)?.displayName || getAgent(task.assignee!)?.name }}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">{{ getAgent(task.assignee!)?.role }}</span>
+              </div>
+            </div>
+            <div class="agent-status-dot" :class="`agent-status-${getAgent(task.assignee!)?.status || 'idle'}`"></div>
+          </div>
+          <div v-else style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">
+            No agent assigned
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <select
+              class="form-select"
+              style="flex: 1; font-size: 12px; padding: 4px 8px;"
+              :value="task.assignee || ''"
+              @change="(e) => {
+                const val = (e.target as HTMLSelectElement).value
+                if (val) {
+                  if (task!.assignee) reassignAgent(task!.id, val)
+                  else assignAgent(task!.id, val)
+                  debouncedSave()
+                }
+              }"
+            >
+              <option value="">— Select Agent —</option>
+              <option v-for="suggestion in suggestAgents(task)" :key="suggestion.agent.id" :value="suggestion.agent.id">
+                {{ suggestion.agent.avatar }} {{ suggestion.agent.displayName || suggestion.agent.name }}
+                <template v-if="suggestion.matchedSkills.length"> ({{ suggestion.matchedSkills.join(', ') }})</template>
+              </option>
+            </select>
+          </div>
+        </div>
+
         <!-- Pipeline Progress -->
         <div class="detail-section">
           <div class="detail-section-title">Pipeline Progress</div>
@@ -565,6 +614,9 @@ function formatOutput(text: string): string {
           </div>
         </div>
 
+        <!-- Agent Discussion (Inter-Agent Messages) -->
+        <TaskAgentDiscussion :taskId="props.taskId" />
+
         <!-- Required Skills -->
         <div v-if="task.requiredSkills && task.requiredSkills.length > 0" class="detail-section">
           <div class="detail-section-title">Required Skills</div>
@@ -593,6 +645,11 @@ function formatOutput(text: string): string {
 
       <!-- ═══════════════ ACTIVITY TAB ═══════════════ -->
       <template v-if="activeTab === 'activity'">
+        <!-- Step Timeline -->
+        <div class="detail-section">
+          <TaskStepTimeline :taskId="props.taskId" />
+        </div>
+
         <!-- Live Agent Activity -->
         <div v-if="hasLiveActivity || recentMessages.length > 0" class="detail-section live-activity-section">
           <div class="detail-section-title" style="display: flex; align-items: center; gap: 8px;">

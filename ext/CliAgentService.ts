@@ -147,6 +147,7 @@ export class CliAgentService {
       branch?: string
       priority: string
       tags: string[]
+      requiredSkills?: string[]
       plannerNotes: string
       reviewerFeedback: string
       conversationHistory: string
@@ -177,6 +178,9 @@ export class CliAgentService {
     sections.push(`| Branch | ${data.branch || '(none)'} |`)
     sections.push(`| Priority | ${data.priority} |`)
     sections.push(`| Tags | ${data.tags.join(', ') || '(none)'} |`)
+    if (data.requiredSkills && data.requiredSkills.length > 0) {
+      sections.push(`| Required Skills | ${data.requiredSkills.join(', ')} |`)
+    }
     sections.push('')
 
     if (data.description) {

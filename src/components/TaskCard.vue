@@ -27,6 +27,11 @@ const needsAttention = computed(() =>
   props.task.approvalStatus === 'pending' || !!props.task.humanAttentionType
 )
 
+/** True when the task has a pending HITL decision */
+const hasPendingDecision = computed(() =>
+  props.task.pendingDecision && props.task.pendingDecision.status === 'pending'
+)
+
 /** Number of pending agent questions */
 const pendingQuestionCount = computed(() =>
   props.task.pendingQuestions?.filter(q => q.status === 'pending').length || 0
@@ -55,14 +60,21 @@ function progressColor(progress: number): string {
 <template>
   <div
     class="task-card"
-    :class="{ dragging: isDragging, 'agent-working': isAgentWorking, 'needs-attention': needsAttention }"
+    :class="{ dragging: isDragging, 'agent-working': isAgentWorking, 'needs-attention': needsAttention, 'needs-decision': hasPendingDecision }"
     draggable="true"
     @dragstart="emit('dragstart')"
     @dragend="emit('dragend')"
     @click="selectTask(task.id)"
   >
+    <!-- HITL Decision Banner (top priority) -->
+    <div v-if="hasPendingDecision && task.humanAttentionType === 'escalation'" class="card-escalation-badge">
+      🆘 Agent needs your help
+    </div>
+    <div v-else-if="hasPendingDecision" class="card-decision-badge">
+      🔔 Decision pending: {{ task.pendingDecision!.decision.action }}
+    </div>
     <!-- Attention Banner (top of card) -->
-    <div v-if="needsAttention" class="card-attention-badge">
+    <div v-else-if="needsAttention" class="card-attention-badge">
       <template v-if="task.humanAttentionType === 'clarification'">❓ Agent needs clarification ({{ pendingQuestionCount }})</template>
       <template v-else-if="task.humanAttentionType === 'feedback'">💬 Feedback requested</template>
       <template v-else-if="task.humanAttentionType === 'review'">👁️ Review requested</template>
@@ -93,8 +105,19 @@ function progressColor(progress: number): string {
         <span v-for="tag in task.tags.slice(0, 3)" :key="tag" class="tag">{{ tag }}</span>
       </div>
       <div class="task-card-agents" v-if="task.assignedAgents.length">
+        <!-- Assignee (primary) shown first with highlight -->
         <div
-          v-for="agentId in task.assignedAgents"
+          v-if="task.assignee && getAgent(task.assignee)"
+          class="agent-avatar-mini agent-assignee"
+          :style="{ background: (getAgent(task.assignee!)?.color || '#666') + '40', border: '2px solid ' + (getAgent(task.assignee!)?.color || '#666') }"
+          :title="(getAgent(task.assignee!)?.displayName || getAgent(task.assignee!)?.name) + ' (assignee)'"
+        >
+          {{ getAgent(task.assignee!)?.avatar }}
+          <span v-if="getAgent(task.assignee!)?.status === 'working' && getAgent(task.assignee!)?.currentTaskId === task.id" class="agent-working-dot"></span>
+        </div>
+        <!-- Other contributing agents -->
+        <div
+          v-for="agentId in task.assignedAgents.filter(id => id !== task.assignee)"
           :key="agentId"
           class="agent-avatar-mini"
           :class="{ 'agent-active': getAgent(agentId)?.status === 'working' && getAgent(agentId)?.currentTaskId === task.id }"
@@ -134,3 +157,69 @@ function progressColor(progress: number): string {
 
   </div>
 </template>
+
+<style scoped>
+/* Decision pending shake + glow */
+.task-card.needs-decision {
+  animation: card-shake 0.5s ease-in-out 1, card-decision-glow 2s ease-in-out infinite;
+  border-color: rgba(245, 158, 11, 0.5) !important;
+}
+
+/* Escalation: more urgent glow */
+.task-card:has(.card-escalation-badge) {
+  animation: card-shake 0.5s ease-in-out 1, card-escalation-glow 1.5s ease-in-out infinite;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+@keyframes card-escalation-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  50% { box-shadow: 0 0 16px 3px rgba(239, 68, 68, 0.3); }
+}
+
+@keyframes card-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes card-decision-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 0 12px 2px rgba(245, 158, 11, 0.25); }
+}
+
+.card-decision-badge {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-yellow, #f59e0b);
+  border-radius: 6px 6px 0 0;
+  margin: -10px -10px 8px -10px;
+  text-align: center;
+  animation: decision-badge-pulse 1.5s ease-in-out infinite;
+}
+
+.card-escalation-badge {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--accent-red, #ef4444);
+  border-radius: 6px 6px 0 0;
+  margin: -10px -10px 8px -10px;
+  text-align: center;
+  animation: decision-badge-pulse 1.2s ease-in-out infinite;
+}
+
+.agent-assignee {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes decision-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+</style>

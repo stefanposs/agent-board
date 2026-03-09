@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useBoard } from '../composables/useBoard'
 import { useExtension } from '../composables/useExtension'
-
+import LogoIcon from './LogoIcon.vue'
 const { workspaces, agents, isExtensionMode, removeWorkspace, addWorkspace, closeSettings } = useBoard()
 const ext = useExtension()
 
@@ -152,7 +152,7 @@ onMounted(() => {
   <div class="detail-overlay" @click.self="closeSettings">
     <div class="settings-panel">
       <div class="create-modal-header">
-        <h2 class="create-modal-title"><img src="/logo.png" alt="" class="modal-logo" /> Settings</h2>
+        <h2 class="create-modal-title"><LogoIcon :size="20" class="modal-logo" /> Settings</h2>
         <button class="detail-close" @click="closeSettings">✕</button>
       </div>
 

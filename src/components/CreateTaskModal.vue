@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useBoard } from '../composables/useBoard'
-import type { TaskPriority, TaskType } from '../domain'
-
-const { workspaces, createTask, closeCreateModal } = useBoard()
+import type { TaskPriority, TaskType, Task } from '../domain'
+import LogoIcon from './LogoIcon.vue'
+const { workspaces, agents, createTask, closeCreateModal, suggestAgents } = useBoard()
 
 const title = ref('')
 const description = ref('')
@@ -12,6 +12,16 @@ const taskType = ref<TaskType>('feature')
 const workspaceId = ref(workspaces.value[0]?.id || '')
 const tagsInput = ref('')
 const skillsInput = ref('')
+const assigneeId = ref('')
+
+/** Compute agent suggestions based on current skill input */
+const agentSuggestions = computed(() => {
+  const skills = skillsInput.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  const tags = tagsInput.value.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+  // Build a partial task object for scoring
+  const partial = { requiredSkills: skills, tags } as Task
+  return suggestAgents(partial)
+})
 
 function onSubmit() {
   if (!title.value.trim()) return
@@ -34,6 +44,7 @@ function onSubmit() {
     workspaceId: workspaceId.value,
     tags,
     requiredSkills: requiredSkills.length > 0 ? requiredSkills : undefined,
+    assignee: assigneeId.value || undefined,
   })
 
   closeCreateModal()
@@ -48,7 +59,7 @@ function onKeydown(e: KeyboardEvent) {
   <div class="detail-overlay" @click.self="closeCreateModal" @keydown="onKeydown">
     <div class="create-modal">
       <div class="create-modal-header">
-        <h2 class="create-modal-title"><img src="/logo.png" alt="" class="modal-logo" /> New Task</h2>
+        <h2 class="create-modal-title"><LogoIcon :size="20" class="modal-logo" /> New Task</h2>
         <button class="detail-close" @click="closeCreateModal">✕</button>
       </div>
 
@@ -106,6 +117,17 @@ function onKeydown(e: KeyboardEvent) {
             <select v-model="workspaceId" class="form-select">
               <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
                 {{ ws.icon }} {{ ws.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Assign Agent <span style="color: var(--text-muted); font-weight: 400;">(optional)</span></label>
+            <select v-model="assigneeId" class="form-select">
+              <option value="">— Auto-select —</option>
+              <option v-for="suggestion in agentSuggestions" :key="suggestion.agent.id" :value="suggestion.agent.id">
+                {{ suggestion.agent.avatar }} {{ suggestion.agent.displayName || suggestion.agent.name }}
+                <template v-if="suggestion.matchedSkills.length > 0"> ({{ Math.round(suggestion.score * 100) }}% match)</template>
               </option>
             </select>
           </div>

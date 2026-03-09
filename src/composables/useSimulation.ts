@@ -75,17 +75,36 @@ export function startAgents() {
         (t) =>
           eligibleStages.includes(t.stage) &&
           !wf.isFinalStage(t.stage) &&
-          t.approvalStatus !== 'pending',
+          t.approvalStatus !== 'pending' &&
+          !(t.pendingDecision && t.pendingDecision.status === 'pending') &&
+          // Respect manual assignment: only the assigned agent may work on locked tasks
+          (!t.manuallyAssigned || t.assignee === agent.id || !t.assignee),
       )
 
       if (eligibleTasks.length === 0) return
 
-      // Pick the first eligible task (highest priority first)
+      // Prioritize tasks assigned to this agent, then score by priority + skill match
       const priorityOrder = ['critical', 'high', 'medium', 'low']
-      const sortedTasks = eligibleTasks.sort(
-        (a, b) => priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority),
-      )
-      const task = sortedTasks[0]
+      const scoredTasks = eligibleTasks.map(t => {
+        // Direct assignment: if this agent is the assignee, max priority
+        const assigneeBonus = t.assignee === agent.id ? 1.0 : 0.0
+
+        const priorityScore = (4 - priorityOrder.indexOf(t.priority)) / 4
+        const neededSkills = t.requiredSkills || []
+        let skillScore = 0
+        if (neededSkills.length > 0) {
+          const hits = neededSkills.filter(s =>
+            agent.skills.some(sk => sk.toLowerCase() === s.toLowerCase()) ||
+            agent.languages.some(l => l.toLowerCase() === s.toLowerCase()),
+          ).length
+          skillScore = hits / neededSkills.length
+        }
+        // Weighted: assignee bonus dominates, then priority + skill
+        const totalScore = assigneeBonus * 0.50 + priorityScore * 0.20 + skillScore * 0.30
+        return { task: t, score: totalScore }
+      })
+      scoredTasks.sort((a, b) => b.score - a.score)
+      const task = scoredTasks[0].task
 
       // Generate prompt for this agent + task stage
       const prompt = getAgentPromptForStage(agent.role, task.title, task.description, task.stage)
@@ -168,7 +187,10 @@ function startStandaloneSimulation() {
           agentStages.includes(t.stage) &&
           !wf.isFinalStage(t.stage) &&
           !wf.stageHasApprovalGate(t.stage) &&
-          t.approvalStatus !== 'pending',
+          t.approvalStatus !== 'pending' &&
+          !(t.pendingDecision && t.pendingDecision.status === 'pending') &&
+          // Respect manual assignment: only the assigned agent may work on locked tasks
+          (!t.manuallyAssigned || t.assignee === agent.id || !t.assignee),
       )
 
       if (eligibleTasks.length === 0) {

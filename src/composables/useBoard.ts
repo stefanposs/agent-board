@@ -1,5 +1,5 @@
 import { ref, computed, reactive, watch } from 'vue'
-import type { Task, Agent, Workspace, TaskEvent, TaskPriority, TaskType, Session, SessionMessage, Comment } from '../domain'
+import type { Task, Agent, Workspace, TaskEvent, TaskPriority, TaskType, Session, SessionMessage, Comment, PendingDecision, AgentDecision, AgentMessage } from '../domain'
 import { useWorkflow } from './useWorkflow'
 import { MOCK_TASKS, MOCK_AGENTS, MOCK_WORKSPACES } from '../mock/data'
 
@@ -109,6 +109,18 @@ function useBoard() {
 
     // Apply transition effects from workflow config (replaces hardcoded review/merge/impl logic)
     wf.applyTransitionEffects(task, transition.effects)
+
+    // Release manual assignment lock if the assigned agent's role doesn't match the new stage
+    if (task.manuallyAssigned && task.assignee) {
+      const assignedAgent = getAgent(task.assignee)
+      if (assignedAgent) {
+        const rolesForNewStage = wf.getAgentRolesForStage(toStage)
+        if (rolesForNewStage.length > 0 && !rolesForNewStage.includes(assignedAgent.role)) {
+          task.manuallyAssigned = false
+          task.assignee = null
+        }
+      }
+    }
 
     // If entering a stage with approval gates, set approval pending
     if (wf.stageHasApprovalGate(toStage) && !transition.effects?.includes('set-approved')) {
@@ -220,7 +232,7 @@ function useBoard() {
   })
 
   const humanInterventionTasks = computed(() => {
-    return tasks.value.filter((t) => t.approvalStatus === 'pending')
+    return tasks.value.filter((t) => t.approvalStatus === 'pending' || t.humanAttentionType === 'escalation')
   })
 
   function addActivity(message: string, type: string) {
@@ -241,7 +253,7 @@ function useBoard() {
     }, 8000)
   }
 
-  function createTask(opts: { title: string; description: string; priority: TaskPriority; taskType?: TaskType; workspaceId: string; tags: string[]; requiredSkills?: string[] }) {
+  function createTask(opts: { title: string; description: string; priority: TaskPriority; taskType?: TaskType; workspaceId: string; tags: string[]; requiredSkills?: string[]; assignee?: string }) {
     const now = Date.now()
     const taskType = opts.taskType || 'feature'
     const newTask: Task = {
@@ -251,7 +263,9 @@ function useBoard() {
       stage: wf.firstStage.value,
       priority: opts.priority,
       workspaceId: opts.workspaceId,
-      assignedAgents: [],
+      assignee: opts.assignee || null,
+      manuallyAssigned: !!opts.assignee,
+      assignedAgents: opts.assignee ? [opts.assignee] : [],
       approvalStatus: 'none',
       events: [
         {
@@ -592,23 +606,291 @@ function useBoard() {
     addToast('Answer submitted', 'success')
   }
 
-  /** Find the best-matching agent for a task based on required skills / languages. */
+  /** Find the best-matching agent for a task based on required skills, languages, and availability. */
   function getBestAgentForTask(agentList: Agent[], targetRoles: string[], task: Task): Agent | null {
     const needed = task.requiredSkills || []
     // Filter to agents matching any of the target roles
     const candidates = agentList.filter((a) => targetRoles.includes(a.role))
-    if (candidates.length === 0) return null
-    if (needed.length === 0) return candidates.find((a) => a.status === 'idle') || candidates[0] || null
-    let bestAgent: Agent | null = null
-    let bestScore = -1
-    for (const agent of candidates) {
-      const skillHits = needed.filter((s) => agent.skills.includes(s) || agent.languages.includes(s)).length
-      if (skillHits > bestScore) {
-        bestScore = skillHits
-        bestAgent = agent
+    if (candidates.length === 0) {
+      // Fallback: try all agents if no role match (skill-first matching)
+      if (needed.length > 0) {
+        const allScored = scoreAgents(agentList, needed)
+        if (allScored.length > 0 && allScored[0].score > 0) return allScored[0].agent
       }
+      return null
     }
-    return bestAgent
+    if (needed.length === 0) return candidates.find((a) => a.status === 'idle') || candidates[0] || null
+
+    const scored = scoreAgents(candidates, needed)
+    return scored[0]?.agent || candidates.find((a) => a.status === 'idle') || candidates[0] || null
+  }
+
+  /** Score and rank agents by skill match (60%), idle status (25%), and recency (15%). */
+  function scoreAgents(candidates: Agent[], neededSkills: string[]): Array<{ agent: Agent; score: number }> {
+    const scored = candidates.map((agent) => {
+      // Skill match score (0-1): how many required skills does this agent cover?
+      const skillHits = neededSkills.filter((s) =>
+        agent.skills.some(sk => sk.toLowerCase() === s.toLowerCase()) ||
+        agent.languages.some(l => l.toLowerCase() === s.toLowerCase()),
+      ).length
+      const skillScore = neededSkills.length > 0 ? skillHits / neededSkills.length : 0
+
+      // Availability score: idle agents preferred
+      const idleScore = agent.status === 'idle' ? 1.0 : agent.status === 'waiting' ? 0.5 : 0.0
+
+      // Recency score: prefer agents that haven't been used recently (less busy)
+      const recencyScore = agent.currentTaskId ? 0.0 : 1.0
+
+      // Weighted total
+      const score = skillScore * 0.60 + idleScore * 0.25 + recencyScore * 0.15
+
+      return { agent, score }
+    })
+
+    return scored.sort((a, b) => b.score - a.score)
+  }
+
+  /** Assign an agent as the primary responsible (assignee) for a task. */
+  function assignAgent(taskId: string, agentId: string) {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task) return
+    const agent = getAgent(agentId)
+    task.assignee = agentId
+    task.manuallyAssigned = true
+    if (!task.assignedAgents.includes(agentId)) {
+      task.assignedAgents.push(agentId)
+    }
+    task.updatedAt = Date.now()
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'human_action',
+      message: `👤 Assigned to ${agent?.name || agentId}`,
+    })
+    addActivity(`👤 **${agent?.name || agentId}** assigned to "${task.title}"`, 'human_action')
+    addToast(`Assigned ${agent?.name || agentId} to "${task.title}"`, 'success')
+  }
+
+  /** Reassign a task to a different agent. */
+  function reassignAgent(taskId: string, newAgentId: string) {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task) return
+    const prevAgent = task.assignee ? getAgent(task.assignee) : null
+    const newAgent = getAgent(newAgentId)
+    task.assignee = newAgentId
+    task.manuallyAssigned = true
+    if (!task.assignedAgents.includes(newAgentId)) {
+      task.assignedAgents.push(newAgentId)
+    }
+    task.updatedAt = Date.now()
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'human_action',
+      message: `🔄 Reassigned from ${prevAgent?.name || task.assignee || 'unassigned'} to ${newAgent?.name || newAgentId}`,
+    })
+    addActivity(`🔄 **${newAgent?.name || newAgentId}** now assigned to "${task.title}"`, 'human_action')
+    addToast(`Reassigned to ${newAgent?.name || newAgentId}`, 'info')
+  }
+
+  /** Suggest agents ranked by skill match for a task (uses requiredSkills + tags). */
+  function suggestAgents(task: Task): Array<{ agent: Agent; score: number; matchedSkills: string[] }> {
+    const needed = [...(task.requiredSkills || []), ...task.tags].map(s => s.toLowerCase())
+    if (needed.length === 0) {
+      // No skills to match — return all agents sorted by availability
+      return agents.value.map(agent => ({ agent, score: agent.status === 'idle' ? 1.0 : 0.5, matchedSkills: [] }))
+    }
+    return agents.value.map(agent => {
+      const agentSkills = [...agent.skills, ...agent.languages].map(s => s.toLowerCase())
+      const matchedSkills = needed.filter(s => agentSkills.includes(s))
+      const skillScore = matchedSkills.length / needed.length
+      const idleScore = agent.status === 'idle' ? 1.0 : agent.status === 'waiting' ? 0.5 : 0.0
+      const score = skillScore * 0.70 + idleScore * 0.30
+      return { agent, score, matchedSkills }
+    }).sort((a, b) => b.score - a.score)
+  }
+
+  // ─── HITL (Human-in-the-Loop) ─────────────────────────────────
+
+  /** Tasks that have a pending decision awaiting human confirmation. */
+  const pendingDecisionTasks = computed(() =>
+    tasks.value.filter(t => t.pendingDecision && t.pendingDecision.status === 'pending')
+  )
+
+  /** Set a pending decision on a task — blocks further progress until human confirms. */
+  function setPendingDecision(
+    taskId: string,
+    decision: AgentDecision,
+    agentId: string,
+    context: string,
+    proposedStage?: string,
+  ): PendingDecision | undefined {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task) return undefined
+
+    const pd: PendingDecision = {
+      id: `pd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      decision,
+      agentId,
+      taskId,
+      timestamp: Date.now(),
+      context,
+      proposedStage,
+      status: 'pending',
+    }
+    task.pendingDecision = pd
+    task.humanAttentionType = 'decision-confirmation'
+    task.updatedAt = Date.now()
+
+    // Record as event for traceability
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'decision',
+      agentId,
+      message: `🔔 Agent proposes: ${decision.action} — "${decision.reason}" (confidence: ${Math.round(decision.confidence * 100)}%)`,
+    })
+
+    addActivity(
+      `🔔 **${getAgent(agentId)?.name || agentId}** awaits confirmation for "${task.title}": ${decision.action}`,
+      'decision',
+    )
+    addToast(`⏳ Decision pending: ${task.title} — ${decision.action}`, 'warning')
+
+    return pd
+  }
+
+  /** Confirm (approve) a pending decision — executes the proposed action. */
+  function confirmDecision(taskId: string, feedback?: string): PendingDecision | undefined {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task?.pendingDecision || task.pendingDecision.status !== 'pending') return undefined
+
+    const pd = task.pendingDecision
+    pd.status = 'approved'
+    pd.humanFeedback = feedback
+    task.humanAttentionType = undefined
+    task.updatedAt = Date.now()
+
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'human_action',
+      message: `✅ Human confirmed: ${pd.decision.action}${feedback ? ` — "${feedback}"` : ''}`,
+    })
+
+    addActivity(
+      `✅ Confirmed **${pd.decision.action}** for "${task.title}"`,
+      'human_action',
+    )
+    addToast(`✅ Decision confirmed: ${task.title}`, 'success')
+
+    // Clear pendingDecision (caller is responsible for executing the decision)
+    task.pendingDecision = undefined
+
+    return pd
+  }
+
+  /** Reject a pending decision — agent action is NOT executed. */
+  function rejectDecision(taskId: string, feedback?: string): PendingDecision | undefined {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task?.pendingDecision || task.pendingDecision.status !== 'pending') return undefined
+
+    const pd = task.pendingDecision
+    pd.status = 'rejected'
+    pd.humanFeedback = feedback
+    task.humanAttentionType = undefined
+    task.updatedAt = Date.now()
+
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'human_action',
+      message: `❌ Human rejected: ${pd.decision.action}${feedback ? ` — "${feedback}"` : ''}`,
+    })
+
+    addActivity(
+      `❌ Rejected **${pd.decision.action}** for "${task.title}"`,
+      'human_action',
+    )
+    addToast(`❌ Decision rejected: ${task.title}`, 'info')
+
+    task.pendingDecision = undefined
+
+    return pd
+  }
+
+  // ─── Inter-Agent Discussion ───────────────────────────────────
+
+  /** Add an inter-agent message (question from one agent to another). */
+  function addAgentMessage(
+    fromAgentId: string,
+    toAgentId: string,
+    taskId: string,
+    question: string,
+  ): AgentMessage | undefined {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task) return undefined
+    if (!task.agentMessages) task.agentMessages = []
+
+    const msg: AgentMessage = {
+      id: `amsg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      fromAgentId,
+      toAgentId,
+      taskId,
+      question,
+      timestamp: Date.now(),
+      status: 'pending',
+    }
+    task.agentMessages.push(msg)
+    task.updatedAt = Date.now()
+
+    const fromAgent = getAgent(fromAgentId)
+    const toAgent = getAgent(toAgentId)
+
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'agent_discussion',
+      agentId: fromAgentId,
+      message: `💬 ${fromAgent?.name || fromAgentId} → ${toAgent?.name || toAgentId}: "${question.slice(0, 100)}${question.length > 100 ? '...' : ''}"`,
+    })
+
+    addActivity(
+      `💬 **${fromAgent?.name || fromAgentId}** asks **${toAgent?.name || toAgentId}**: "${question.slice(0, 60)}..."`,
+      'agent_discussion',
+    )
+    addToast(`💬 Agent discussion on "${task.title}"`, 'info')
+
+    return msg
+  }
+
+  /** Answer an inter-agent message. */
+  function resolveAgentMessage(taskId: string, messageId: string, answer: string) {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task?.agentMessages) return
+    const msg = task.agentMessages.find(m => m.id === messageId)
+    if (!msg) return
+
+    msg.answer = answer
+    msg.answeredAt = Date.now()
+    msg.status = 'answered'
+    task.updatedAt = Date.now()
+
+    const toAgent = getAgent(msg.toAgentId)
+    const fromAgent = getAgent(msg.fromAgentId)
+
+    task.events.push({
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      type: 'agent_discussion',
+      agentId: msg.toAgentId,
+      message: `💬 ${toAgent?.name || msg.toAgentId} replied to ${fromAgent?.name || msg.fromAgentId}: "${answer.slice(0, 100)}${answer.length > 100 ? '...' : ''}"`,
+    })
+
+    addActivity(
+      `💬 **${toAgent?.name || msg.toAgentId}** replied to **${fromAgent?.name || msg.fromAgentId}**`,
+      'agent_discussion',
+    )
   }
 
   return {
@@ -673,9 +955,21 @@ function useBoard() {
     getBestAgentForTask,
     /** Whether a task type requires a git branch */
     needsBranch: (taskType: string) => BRANCH_TASK_TYPES.includes(taskType),
+    // Agent assignment
+    assignAgent,
+    reassignAgent,
+    suggestAgents,
     // Comments
     addComment,
     deleteComment,
+    // HITL (Human-in-the-Loop)
+    pendingDecisionTasks,
+    setPendingDecision,
+    confirmDecision,
+    rejectDecision,
+    // Inter-Agent Discussion
+    addAgentMessage,
+    resolveAgentMessage,
     // Callbacks
     onTaskMoved: (cb: TaskMoveCallback) => {
       taskMoveCallbacks.push(cb)

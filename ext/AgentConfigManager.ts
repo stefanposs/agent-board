@@ -61,12 +61,15 @@ const DEFAULT_AGENTS: AgentConfig[] = [
 // ─── Manager ────────────────────────────────────────────────────
 
 const ROLE_MAP: Record<string, string> = {
+  // Skill folder → role
   architecture: 'architect', 'system-design': 'architect',
   testing: 'reviewer', 'code-reviewer': 'reviewer',
   'project-management': 'planner', 'team-collaboration': 'planner',
   'software-engineering': 'developer', general: 'developer',
+  'anti-patterns': 'reviewer', 'gcp-patterns': 'developer',
+  'marp-presentations': 'planner',
   // Agent .md file name mappings
-  'architecture-reviewer': 'architect', 'lead-architect': 'architect',
+  'architecture-reviewer': 'reviewer', 'lead-architect': 'architect',
   'gcp-architect': 'architect',
   'task-orchestrator': 'planner', 'context-manager': 'planner',
   'stakeholder-agent': 'planner', 'proposal-pitch': 'planner',
@@ -77,6 +80,80 @@ const ROLE_MAP: Record<string, string> = {
   'game-developer': 'developer', 'iot-embedded-expert': 'developer',
   'python-expert': 'developer', 'golang-expert': 'developer',
   'flutter-ios-expert': 'developer',
+}
+
+/** Extract skills from a SKILL.md or agent.md file's content and folder/file name. */
+function extractSkillsFromContent(slug: string, content: string): { skills: string[]; languages: string[] } {
+  const skills: Set<string> = new Set()
+  const languages: Set<string> = new Set()
+
+  // 1. The slug itself is a skill identifier
+  skills.add(slug)
+
+  // 2. Parse frontmatter for explicit skills/languages
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
+  if (fmMatch) {
+    const fm = fmMatch[1]
+    const skillsLine = fm.match(/^skills:\s*(.+)$/m)
+    if (skillsLine) {
+      skillsLine[1].split(',').map(s => s.trim().toLowerCase()).filter(Boolean).forEach(s => skills.add(s))
+    }
+    const langsLine = fm.match(/^languages:\s*(.+)$/m)
+    if (langsLine) {
+      langsLine[1].split(',').map(s => s.trim().toLowerCase()).filter(Boolean).forEach(l => languages.add(l))
+    }
+  }
+
+  // 3. Heuristic: detect known language keywords in content
+  const LANG_KEYWORDS: Record<string, string[]> = {
+    typescript: ['typescript', 'ts', 'angular', 'vue', 'react', 'node'],
+    python: ['python', 'django', 'flask', 'fastapi', 'pytest'],
+    golang: ['golang', 'go ', 'goroutine'],
+    rust: ['rust', 'cargo'],
+    dart: ['dart', 'flutter'],
+    swift: ['swift', 'ios', 'swiftui'],
+    hcl: ['terraform', 'hcl'],
+    bash: ['bash', 'shell', 'zsh'],
+    sql: ['sql', 'postgres', 'mysql'],
+    yaml: ['yaml', 'yml'],
+  }
+
+  const lowerContent = content.toLowerCase()
+  for (const [lang, keywords] of Object.entries(LANG_KEYWORDS)) {
+    if (keywords.some(kw => lowerContent.includes(kw))) {
+      languages.add(lang)
+    }
+  }
+
+  // 4. Heuristic: detect known skill domains
+  const SKILL_KEYWORDS: Record<string, string[]> = {
+    'api-design': ['api design', 'openapi', 'rest', 'graphql', 'grpc'],
+    'testing': ['testing', 'test strategy', 'unit test', 'integration test', 'e2e'],
+    'security': ['security', 'owasp', 'authentication', 'authorization', 'csrf'],
+    'ci-cd': ['ci/cd', 'pipeline', 'github actions', 'jenkins', 'gitlab ci'],
+    'docker': ['docker', 'container', 'dockerfile'],
+    'kubernetes': ['kubernetes', 'k8s', 'helm'],
+    'microservices': ['microservice', 'service mesh', 'event-driven'],
+    'database': ['database', 'orm', 'migration', 'schema'],
+    'frontend': ['frontend', 'css', 'component', 'ui/ux'],
+    'architecture': ['architecture', 'system design', 'ddd', 'domain-driven'],
+    'performance': ['performance', 'profiling', 'optimization', 'caching'],
+    'monitoring': ['monitoring', 'observability', 'logging', 'metrics', 'tracing'],
+    'cloud': ['cloud', 'gcp', 'aws', 'azure', 'serverless'],
+    'mobile': ['mobile', 'ios', 'android', 'flutter', 'react native'],
+    'game-dev': ['game', 'unity', 'godot', 'physics', 'rendering'],
+    'iot': ['iot', 'embedded', 'sensor', 'actuator', 'plc', 'edge computing'],
+    'code-review': ['code review', 'review', 'refactoring', 'clean code'],
+    'project-management': ['project management', 'agile', 'scrum', 'kanban'],
+  }
+
+  for (const [skill, keywords] of Object.entries(SKILL_KEYWORDS)) {
+    if (keywords.some(kw => lowerContent.includes(kw))) {
+      skills.add(skill)
+    }
+  }
+
+  return { skills: [...skills], languages: [...languages] }
 }
 
 const AVATARS = ['📋', '⚙️', '🔍', '🏛️', '🎮', '🌐', '📱', '🛡️', '🧪', '🔧', '☁️', '🎨', '📊', '🤖', '⚡', '🏗️', '🧩']
@@ -182,6 +259,7 @@ export class AgentConfigManager {
         const displayName =
           name || folderName.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
         const role = ROLE_MAP[folderName] || 'developer'
+        const extracted = extractSkillsFromContent(folderName, content)
 
         agents.push({
           id: `agent-${folderName}`,
@@ -193,6 +271,8 @@ export class AgentConfigManager {
           temperature: 0.3,
           maxContextTokens: 128_000,
           systemPrompt: content,
+          skills: extracted.skills,
+          languages: extracted.languages,
         })
         idx++
       } catch {
@@ -227,6 +307,7 @@ export class AgentConfigManager {
           : slug.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
 
         const role = ROLE_MAP[slug] || 'developer'
+        const extracted = extractSkillsFromContent(slug, content)
 
         agents.push({
           id: `agent-${slug}`,
@@ -238,6 +319,8 @@ export class AgentConfigManager {
           temperature: 0.3,
           maxContextTokens: 128_000,
           systemPrompt: content,
+          skills: extracted.skills,
+          languages: extracted.languages,
         })
         idx++
       } catch {

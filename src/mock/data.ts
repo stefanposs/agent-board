@@ -114,6 +114,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['feature', 'real-time'],
     taskType: 'feature',
     progress: 0,
+    requiredSkills: ['api-design', 'full-stack'],
     comments: [],
   },
   {
@@ -133,6 +134,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['ux', 'theme'],
     taskType: 'design',
     progress: 0,
+    requiredSkills: ['frontend', 'css'],
     comments: [],
   },
 
@@ -144,6 +146,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'planning',
     priority: 'high',
     workspaceId: 'ws-1',
+    assignee: 'agent-planner',
     assignedAgents: ['agent-planner', 'agent-architect'],
     approvalStatus: 'none',
     events: [
@@ -156,6 +159,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['api', 'breaking-change'],
     taskType: 'feature',
     progress: 35,
+    requiredSkills: ['api-design', 'architecture', 'database'],
     branch: 'feature/metadata-api-v2',
     comments: [
       { id: 'c1', taskId: 'task-3', content: 'Sollten wir Cursor-based Pagination verwenden statt Offset? Bessere Performance bei großen Datasets.', author: 'user', timestamp: now - 9 * hour },
@@ -169,6 +173,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'planning',
     priority: 'critical',
     workspaceId: 'ws-2',
+    assignee: 'agent-planner',
     assignedAgents: ['agent-planner'],
     approvalStatus: 'none',
     events: [
@@ -179,6 +184,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['infra', 'migration', 'urgent'],
     taskType: 'infra',
     progress: 20,
+    requiredSkills: ['terraform', 'cloud', 'ci-cd'],
     branch: 'feature/tf-state-gcs-migration',
     comments: [],
   },
@@ -191,6 +197,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'implementation',
     priority: 'high',
     workspaceId: 'ws-1',
+    assignee: 'agent-dev',
     assignedAgents: ['agent-dev'],
     approvalStatus: 'none',
     events: [
@@ -204,6 +211,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['auth', 'security', 'refactor'],
     taskType: 'feature',
     progress: 65,
+    requiredSkills: ['security', 'api-design', 'full-stack'],
     branch: 'refactor/oauth2-oidc-keycloak',
     comments: [
       { id: 'c3', taskId: 'task-5', content: 'Keycloak Realm Config muss noch in die Terraform-Module aufgenommen werden.', author: 'user', timestamp: now - 12 * hour },
@@ -228,6 +236,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'implementation',
     priority: 'medium',
     workspaceId: 'ws-2',
+    assignee: 'agent-devops',
     assignedAgents: ['agent-devops'],
     approvalStatus: 'none',
     events: [
@@ -239,6 +248,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['ci', 'performance'],
     taskType: 'infra',
     progress: 45,
+    requiredSkills: ['ci-cd', 'docker', 'performance'],
     branch: 'improve/ci-parallel-stages',
     comments: [],
     pullRequest: {
@@ -259,6 +269,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'implementation',
     priority: 'medium',
     workspaceId: 'ws-3',
+    assignee: 'agent-dev',
     assignedAgents: ['agent-dev'],
     approvalStatus: 'none',
     events: [
@@ -269,6 +280,7 @@ export const MOCK_TASKS: Task[] = [
     tags: ['ui', 'design-system'],
     taskType: 'design',
     progress: 30,
+    requiredSkills: ['frontend', 'css'],
     branch: 'feature/storybook-component-lib',
     comments: [],
   },
@@ -281,6 +293,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'review',
     priority: 'high',
     workspaceId: 'ws-1',
+    assignee: 'agent-reviewer',
     assignedAgents: ['agent-reviewer'],
     approvalStatus: 'pending',
     events: [
@@ -319,6 +332,7 @@ export const MOCK_TASKS: Task[] = [
     stage: 'review',
     priority: 'critical',
     workspaceId: 'ws-2',
+    assignee: 'agent-devops',
     assignedAgents: ['agent-reviewer', 'agent-devops'],
     approvalStatus: 'pending',
     events: [
@@ -436,6 +450,49 @@ export const MOCK_TASKS: Task[] = [
       deletions: 567,
       changedFiles: 32,
       checks: { passed: 8, total: 8 },
+    },
+  },
+  // ─── Escalation Demo ───
+  {
+    id: 'task-13',
+    title: 'Database migration v3',
+    description: 'Migrate from PostgreSQL 14 to 16 with zero-downtime schema changes.',
+    stage: 'implementation',
+    priority: 'critical',
+    workspaceId: 'ws-1',
+    assignee: 'agent-dev',
+    assignedAgents: ['agent-dev', 'agent-devops'],
+    approvalStatus: 'none',
+    events: [
+      { id: 'e26', timestamp: now - 24 * hour, type: 'stage_change', toStage: 'implementation', message: 'Moved to implementation' },
+      { id: 'e27', timestamp: now - 2 * hour, type: 'agent_action', agentId: 'agent-dev', message: '🆘 Agent escalated — needs guidance on data migration strategy' },
+    ],
+    createdAt: now - 48 * hour,
+    updatedAt: now - 2 * hour,
+    tags: ['database', 'migration', 'postgresql'],
+    taskType: 'feature',
+    progress: 35,
+    requiredSkills: ['postgresql', 'database', 'devops'],
+    branch: 'feature/pg16-migration',
+    comments: [],
+    humanAttentionType: 'escalation' as const,
+    pendingDecision: {
+      taskId: 'task-13',
+      agentId: 'agent-dev',
+      decision: {
+        action: 'escalate' as const,
+        reason: 'I need guidance on whether to use pg_dump/pg_restore or logical replication for the zero-downtime migration. Both have trade-offs.',
+        confidence: 0.4,
+        questions: [
+          'Should we use pg_dump/pg_restore (simpler but requires maintenance window) or logical replication (zero-downtime but more complex)?',
+          'Do we have budget for a temporary read replica during migration?',
+          'What is the maximum acceptable downtime window if we go with pg_dump?',
+        ],
+      },
+      context: '🆘 **golang-expert** needs your help!\n\n**Reason:** I need guidance on whether to use pg_dump/pg_restore or logical replication for the zero-downtime migration.\n\n**Questions:**\n• Should we use pg_dump/pg_restore or logical replication?\n• Do we have budget for a temporary read replica?\n• What is the maximum acceptable downtime window?',
+      status: 'pending' as const,
+      id: 'pd-demo-1',
+      timestamp: now - 2 * hour,
     },
   },
 ]
