@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { useBoard } from '../composables/useBoard'
+import { useNotifications } from '../composables/useNotifications'
+import { useExtension } from '../composables/useExtension'
 import { toggleSimulation } from '../composables/useSimulation'
 import LogoIcon from './LogoIcon.vue'
 
-const { simulationRunning, humanInterventionTasks, totalUsageStats, selectTask } = useBoard()
+const { simulationRunning, humanInterventionTasks, selectTask, openReportPanel, agents, updateAgentStatus } = useBoard()
+const { unreadCount, toggleNotificationCenter } = useNotifications()
+const ext = useExtension()
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
-  return String(n)
+function stopAllAgents() {
+  const working = agents.value.filter(a => a.status === 'working')
+  if (working.length === 0) return
+  if (!confirm(`Stop all ${working.length} running agent${working.length > 1 ? 's' : ''}? This cannot be undone.`)) return
+  for (const agent of working) {
+    ext.stopAgent(agent.id)
+    updateAgentStatus(agent.id, 'idle', null)
+  }
 }
 </script>
 
@@ -19,16 +27,18 @@ function formatTokens(n: number): string {
         <LogoIcon :size="28" />
         <span>Agent Board</span>
       </div>
-      <span style="font-size: 12px; color: var(--text-muted); border-left: 1px solid var(--border-color); padding-left: 12px;">
-        AI Workflow Orchestration
-      </span>
 
       <!-- Human Intervention Alert -->
       <div
         v-if="humanInterventionTasks.length > 0"
         class="intervention-alert"
         :class="{ 'escalation-alert': humanInterventionTasks.some(t => t.humanAttentionType === 'escalation') }"
+        role="button"
+        tabindex="0"
+        :aria-label="`${humanInterventionTasks.length} tasks need attention`"
         @click="selectTask(humanInterventionTasks[0].id)"
+        @keydown.enter="selectTask(humanInterventionTasks[0].id)"
+        @keydown.space.prevent="selectTask(humanInterventionTasks[0].id)"
       >
         <span class="intervention-pulse"></span>
         <span v-if="humanInterventionTasks.some(t => t.humanAttentionType === 'escalation')">
@@ -40,21 +50,43 @@ function formatTokens(n: number): string {
       </div>
     </div>
     <div class="app-header-right">
-      <!-- Token Usage -->
-      <div class="header-usage" :title="`${totalUsageStats.totalRequests} requests, $${totalUsageStats.totalCost.toFixed(2)} estimated cost`">
-        <span class="usage-label">🪙</span>
-        <span class="usage-value">{{ formatTokens(totalUsageStats.totalTokens) }}</span>
-        <span class="usage-cost">${{ totalUsageStats.totalCost.toFixed(2) }}</span>
-      </div>
+      <!-- Notification Bell -->
+      <button
+        class="notification-bell"
+        :class="{ 'has-unread': unreadCount > 0 }"
+        @click="toggleNotificationCenter"
+        :title="`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`"
+        :aria-label="`${unreadCount} unread notifications`"
+      >
+        🔔
+        <span v-if="unreadCount > 0" class="notification-badge">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+      </button>
 
-      <div
+      <!-- Report Button -->
+      <button class="btn btn-sm" style="font-size: 12px;" @click="openReportPanel" title="Open Report">
+        📊 Report
+      </button>
+
+      <!-- Stop All Agents (shown only when agents are working) -->
+      <button
+        v-if="agents.some(a => a.status === 'working')"
+        class="btn btn-sm stop-all-btn"
+        @click="stopAllAgents"
+        title="Stop all running agents"
+      >
+        ⏹ Stop All
+      </button>
+
+      <button
         class="sim-toggle"
         :class="simulationRunning ? 'active' : 'inactive'"
+        :aria-pressed="simulationRunning"
         @click="toggleSimulation"
+        title="Toggle AI agent automation"
       >
         <div class="sim-dot" :class="simulationRunning ? 'active' : 'inactive'"></div>
-        {{ simulationRunning ? 'Agents Active' : 'Start Agents' }}
-      </div>
+        {{ simulationRunning ? 'Active' : 'Start' }}
+      </button>
     </div>
   </header>
 </template>

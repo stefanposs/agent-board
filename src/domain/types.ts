@@ -12,8 +12,6 @@ export type KnownRole = typeof KNOWN_ROLES[number]
 
 export type AgentStatus = 'idle' | 'working' | 'waiting' | 'blocked'
 
-export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
-
 export type TaskType = 'feature' | 'bugfix' | 'docs' | 'infra' | 'research' | 'design' | 'ops' | 'other'
 
 export type HumanAttentionType = 'approval' | 'feedback' | 'clarification' | 'review' | 'decision-confirmation' | 'escalation'
@@ -95,12 +93,24 @@ export interface AgentQuestion {
   status: 'pending' | 'answered'
 }
 
+// ─── Goals ──────────────────────────────────────────────────────
+
+export interface Goal {
+  id: string
+  title: string
+  description?: string
+  owner?: string
+  deadline?: number
+  taskIds: string[]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Task {
   id: string
   title: string
   description: string
   stage: TaskStage
-  priority: TaskPriority
   workspaceId: string
   /** Primary responsible agent — the agent currently owning this task */
   assignee?: string | null
@@ -129,6 +139,10 @@ export interface Task {
   pendingDecision?: PendingDecision
   /** Inter-agent discussion messages */
   agentMessages?: AgentMessage[]
+  /** IDs of linked goals */
+  goalIds?: string[]
+  /** Where the agent should place output files (e.g. docs/concept.md). If empty, agent asks. */
+  outputPath?: string
 }
 
 export interface Workspace {
@@ -152,13 +166,18 @@ export interface Organization {
 
 // ─── Comments ───────────────────────────────────────────────────
 
+export type CommentType = 'comment' | 'note' | 'meeting-note' | 'question' | 'decision'
+
 export interface Comment {
   id: string
   taskId: string
   content: string
   author: string          // 'user' or agentId
   timestamp: number
-  replyToId?: string      // for threaded replies (future)
+  replyToId?: string      // for threaded replies
+  type?: CommentType      // default 'comment'
+  editedAt?: number       // timestamp of last edit
+  pinned?: boolean        // pinned to top
 }
 
 // ─── Task Metrics (KPI preparation) ─────────────────────────────

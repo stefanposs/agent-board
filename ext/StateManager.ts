@@ -1,8 +1,9 @@
 import * as vscode from 'vscode'
-import type { TaskData, SessionData } from './protocol'
+import type { TaskData, SessionData, GoalData } from './protocol'
 
 const TASKS_KEY = 'agentBoard.tasks'
 const SESSIONS_KEY = 'agentBoard.sessions'
+const GOALS_KEY = 'agentBoard.goals'
 
 export class StateManager {
   constructor(private ctx: vscode.ExtensionContext) {}
@@ -27,17 +28,29 @@ export class StateManager {
     return this.ctx.workspaceState.get<SessionData[]>(SESSIONS_KEY, [])
   }
 
-  // ─── Bulk ───────────────────────────────────────────────────
+  // ─── Goals ──────────────────────────────────────────────────
 
-  saveAll(tasks: TaskData[], sessions: SessionData[]): void {
-    this.saveTasks(tasks)
-    this.saveSessions(sessions)
+  saveGoals(goals: GoalData[]): void {
+    this.ctx.workspaceState.update(GOALS_KEY, goals)
   }
 
-  loadAll(): { tasks: TaskData[]; sessions: SessionData[] } {
+  loadGoals(): GoalData[] {
+    return this.ctx.workspaceState.get<GoalData[]>(GOALS_KEY, [])
+  }
+
+  // ─── Bulk ───────────────────────────────────────────────────
+
+  saveAll(tasks: TaskData[], sessions: SessionData[], goals?: GoalData[]): void {
+    this.saveTasks(tasks)
+    this.saveSessions(sessions)
+    if (goals) this.saveGoals(goals)
+  }
+
+  loadAll(): { tasks: TaskData[]; sessions: SessionData[]; goals: GoalData[] } {
     return {
       tasks: this.loadTasks(),
       sessions: this.loadSessions(),
+      goals: this.loadGoals(),
     }
   }
 
@@ -45,5 +58,6 @@ export class StateManager {
   clear(): void {
     this.ctx.workspaceState.update(TASKS_KEY, undefined)
     this.ctx.workspaceState.update(SESSIONS_KEY, undefined)
+    this.ctx.workspaceState.update(GOALS_KEY, undefined)
   }
 }

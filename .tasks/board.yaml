@@ -18,9 +18,11 @@ agents:
 # Board display settings.
 board:
   maxTasks: 0          # 0 = unlimited
-  defaultPriority: medium
   autoSave: true
   autoSaveIntervalMs: 30000
+
+# Board type preset: software-engineering, task-board
+boardType: task-board
 
 # Developer agent settings.
 developer:

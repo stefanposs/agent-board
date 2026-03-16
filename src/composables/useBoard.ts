@@ -1,7 +1,8 @@
 import { ref, computed, reactive, watch } from 'vue'
-import type { Task, Agent, Workspace, TaskEvent, TaskPriority, TaskType, Session, SessionMessage, Comment, PendingDecision, AgentDecision, AgentMessage } from '../domain'
+import type { Task, Agent, Workspace, TaskEvent, TaskType, Session, SessionMessage, Comment, PendingDecision, AgentDecision, AgentMessage, Goal } from '../domain'
 import { useWorkflow } from './useWorkflow'
-import { MOCK_TASKS, MOCK_AGENTS, MOCK_WORKSPACES } from '../mock/data'
+import { useNotifications } from './useNotifications'
+import { MOCK_TASKS, MOCK_AGENTS, MOCK_WORKSPACES, MOCK_GOALS } from '../mock/data'
 
 // ─── Reactive State (singleton) ─────────────────────────────────
 
@@ -22,6 +23,14 @@ const isExtensionMode = ref(false)
 const showAgentPanel = ref(false)
 const selectedAgentId = ref<string | null>(null)
 const agentPanelTaskId = ref<string | null>(null)
+const goals = ref<Goal[]>(isInVSCodeWebview ? [] : JSON.parse(JSON.stringify(MOCK_GOALS)))
+const showSplashScreen = ref(false)
+const showReportPanel = ref(false)
+const reportContent = ref('')
+const reportLoading = ref(false)
+const showGoalDetail = ref(false)
+const selectedGoalId = ref<string | null>(null)
+const boardType = ref('software-engineering')
 
 // ─── Task Move Callbacks ────────────────────────────────────────
 type TaskMoveCallback = (taskId: string, fromStage: string, toStage: string, task: Task) => void
@@ -253,7 +262,7 @@ function useBoard() {
     }, 8000)
   }
 
-  function createTask(opts: { title: string; description: string; priority: TaskPriority; taskType?: TaskType; workspaceId: string; tags: string[]; requiredSkills?: string[]; assignee?: string }) {
+  function createTask(opts: { title: string; description: string; taskType?: TaskType; workspaceId?: string; tags: string[]; requiredSkills?: string[]; assignee?: string; goalIds?: string[]; outputPath?: string }) {
     const now = Date.now()
     const taskType = opts.taskType || 'feature'
     const newTask: Task = {
@@ -261,8 +270,7 @@ function useBoard() {
       title: opts.title,
       description: opts.description,
       stage: wf.firstStage.value,
-      priority: opts.priority,
-      workspaceId: opts.workspaceId,
+      workspaceId: opts.workspaceId || '',
       assignee: opts.assignee || null,
       manuallyAssigned: !!opts.assignee,
       assignedAgents: opts.assignee ? [opts.assignee] : [],
@@ -285,6 +293,8 @@ function useBoard() {
       pendingQuestions: [],
       comments: [],
       metrics: { createdAt: now, stageEnteredAt: { [wf.firstStage.value]: now }, feedbackLoops: { devToPlanner: 0, reviewToDev: 0 } },
+      goalIds: opts.goalIds,
+      outputPath: opts.outputPath,
     }
     tasks.value.unshift(newTask)
     const firstIcon = wf.getStageConfig(wf.firstStage.value)?.icon ?? '💡'
@@ -328,6 +338,9 @@ function useBoard() {
     agents: Array<{ id: string; name: string; role: string; avatar: string; color: string; model: string; temperature: number; maxContextTokens: number; systemPrompt: string; skills?: string[]; languages?: string[] }>
     persistedTasks?: any[]
     persistedSessions?: any[]
+    persistedGoals?: any[]
+    showSplashOnStart?: boolean
+    boardType?: string
   }) {
     isExtensionMode.value = true
 
@@ -383,6 +396,26 @@ function useBoard() {
     } else {
       sessions.value = []
     }
+
+    // Restore persisted goals
+    if (data.persistedGoals && data.persistedGoals.length > 0) {
+      goals.value = data.persistedGoals as Goal[]
+    } else {
+      goals.value = []
+    }
+
+    // Show splash screen on start if enabled
+    if (data.showSplashOnStart !== false) {
+      showSplashScreen.value = true
+    }
+
+    // Set board type
+    if (data.boardType) {
+      boardType.value = data.boardType
+    }
+
+    // Migrate tasks to valid stages after workflow is applied
+    migrateTaskStages()
 
     activityFeed.value = activityFeed.value.length > 0 ? activityFeed.value : []
   }
@@ -449,33 +482,81 @@ function useBoard() {
   // ─── Comments ────────────────────────────────────────────────
 
   /** Add a comment to a task. */
-  function addComment(taskId: string, content: string, author = 'user'): Comment | undefined {
+  function addComment(taskId: string, content: string, author = 'user', opts?: { type?: Comment['type']; replyToId?: string; pinned?: boolean }): Comment | undefined {
     const task = tasks.value.find((t) => t.id === taskId)
     if (!task) return undefined
     if (!task.comments) task.comments = []
 
     const now = Date.now()
+    const commentType = opts?.type || 'comment'
     const comment: Comment = {
       id: `comment-${now}-${Math.random().toString(36).slice(2, 6)}`,
       taskId,
       content,
       author,
       timestamp: now,
+      type: commentType,
+      replyToId: opts?.replyToId,
+      pinned: commentType === 'decision' ? true : opts?.pinned,
     }
     task.comments.push(comment)
     task.updatedAt = now
+
+    const typeIcon: Record<string, string> = { 'comment': '💬', 'note': '📝', 'meeting-note': '📋', 'question': '❓', 'decision': '✅' }
+    const icon = typeIcon[commentType] || '💬'
 
     // Also add a TaskEvent for the timeline
     task.events.push({
       id: `evt-${now}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: now,
       type: 'comment',
-      message: `💬 ${author === 'user' ? 'User' : getAgent(author)?.name || author}: ${content.slice(0, 80)}${content.length > 80 ? '...' : ''}`,
+      message: `${icon} ${author === 'user' ? 'User' : getAgent(author)?.name || author}: ${content.slice(0, 80)}${content.length > 80 ? '...' : ''}`,
       agentId: author !== 'user' ? author : undefined,
     })
 
-    addActivity(`💬 Comment on "${task.title}"`, 'comment')
+    addActivity(`${icon} ${commentType === 'comment' ? 'Comment' : commentType.charAt(0).toUpperCase() + commentType.slice(1)} on "${task.title}"`, 'comment')
     return comment
+  }
+
+  /** Create a question-type comment + an AgentQuestion, linking them together. */
+  function askAgentViaComment(taskId: string, agentId: string, question: string): { commentId: string; questionId: string } | undefined {
+    const comment = addComment(taskId, question, 'user', { type: 'question' })
+    if (!comment) return undefined
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task) return undefined
+    if (!task.pendingQuestions) task.pendingQuestions = []
+    const q: import('../domain').AgentQuestion = {
+      id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      agentId,
+      question,
+      timestamp: Date.now(),
+      status: 'pending',
+    }
+    task.pendingQuestions.push(q)
+    return { commentId: comment.id, questionId: q.id }
+  }
+
+  /** Edit a comment's content. */
+  function editComment(taskId: string, commentId: string, newContent: string): boolean {
+    const task = tasks.value.find((t) => t.id === taskId)
+    if (!task?.comments) return false
+    const comment = task.comments.find((c) => c.id === commentId)
+    if (!comment) return false
+    comment.content = newContent
+    comment.editedAt = Date.now()
+    task.updatedAt = Date.now()
+    return true
+  }
+
+  /** Toggle pin status of a comment. */
+  function togglePinComment(taskId: string, commentId: string): boolean {
+    const task = tasks.value.find((t) => t.id === taskId)
+    if (!task?.comments) return false
+    const comment = task.comments.find((c) => c.id === commentId)
+    if (!comment) return false
+    comment.pinned = !comment.pinned
+    task.updatedAt = Date.now()
+    return true
   }
 
   /** Delete a comment from a task. */
@@ -591,6 +672,15 @@ function useBoard() {
     task.pendingQuestions.push(q)
     addActivity(`❓ Agent asked: "${question}" on "${task.title}"`, 'agent_action')
     addToast('Agent has a question', 'warning')
+
+    const { addNotification } = useNotifications()
+    addNotification({
+      type: 'question-pending',
+      title: `${getAgent(agentId)?.name || 'Agent'} needs an answer`,
+      message: question.length > 120 ? question.slice(0, 120) + '…' : question,
+      taskId,
+      agentId,
+    })
   }
 
   /** Answer an agent's pending question. */
@@ -757,6 +847,18 @@ function useBoard() {
     )
     addToast(`⏳ Decision pending: ${task.title} — ${decision.action}`, 'warning')
 
+    const { addNotification } = useNotifications()
+    const isEscalation = decision.action === 'escalate'
+    addNotification({
+      type: isEscalation ? 'escalation' : 'decision-pending',
+      title: isEscalation
+        ? `🆘 ${getAgent(agentId)?.name || 'Agent'} needs your help`
+        : `${getAgent(agentId)?.name || 'Agent'} awaits your decision`,
+      message: `${decision.action}: ${decision.reason}`.slice(0, 150),
+      taskId,
+      agentId,
+    })
+
     return pd
   }
 
@@ -893,6 +995,176 @@ function useBoard() {
     )
   }
 
+  // ─── Goals ────────────────────────────────────────────────
+
+  function createGoal(opts: { title: string; description?: string; owner?: string; deadline?: number; taskIds?: string[] }): Goal {
+    const now = Date.now()
+    const goal: Goal = {
+      id: `goal-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      title: opts.title,
+      description: opts.description,
+      owner: opts.owner,
+      deadline: opts.deadline,
+      taskIds: opts.taskIds || [],
+      createdAt: now,
+      updatedAt: now,
+    }
+    goals.value.unshift(goal)
+    addActivity(`🎯 Goal created: "${goal.title}"`, 'human_action')
+    addToast(`Goal created: ${goal.title}`, 'success')
+    return goal
+  }
+
+  function updateGoal(id: string, changes: Partial<Omit<Goal, 'id' | 'createdAt'>>) {
+    const goal = goals.value.find(g => g.id === id)
+    if (!goal) return
+    Object.assign(goal, changes, { updatedAt: Date.now() })
+  }
+
+  function deleteTask(taskId: string) {
+    const task = tasks.value.find(t => t.id === taskId)
+    if (!task) return
+    // Clean up goal references
+    for (const goal of goals.value) {
+      goal.taskIds = goal.taskIds.filter(id => id !== taskId)
+    }
+    // Clean up sessions
+    sessions.value = sessions.value.filter(s => s.taskId !== taskId)
+    // Remove the task
+    tasks.value = tasks.value.filter(t => t.id !== taskId)
+    // Clear selection if this task was selected
+    if (selectedTaskId.value === taskId) selectedTaskId.value = null
+    addActivity(`🗑️ **${task.title}** deleted`, 'human_action')
+    addToast(`Task deleted: ${task.title}`, 'info')
+  }
+
+  function deleteGoal(id: string) {
+    const goal = goals.value.find(g => g.id === id)
+    goals.value = goals.value.filter(g => g.id !== id)
+    // Remove goalId references from tasks
+    for (const task of tasks.value) {
+      if (task.goalIds) {
+        task.goalIds = task.goalIds.filter(gid => gid !== id)
+      }
+    }
+    if (goal) {
+      addActivity(`🎯 Goal deleted: "${goal.title}"`, 'human_action')
+      addToast(`Goal deleted: ${goal.title}`, 'info')
+    }
+  }
+
+  function linkTaskToGoal(taskId: string, goalId: string) {
+    const task = tasks.value.find(t => t.id === taskId)
+    const goal = goals.value.find(g => g.id === goalId)
+    if (!task || !goal) return
+    if (!task.goalIds) task.goalIds = []
+    if (!task.goalIds.includes(goalId)) task.goalIds.push(goalId)
+    if (!goal.taskIds.includes(taskId)) goal.taskIds.push(taskId)
+    task.updatedAt = Date.now()
+    goal.updatedAt = Date.now()
+  }
+
+  function unlinkTaskFromGoal(taskId: string, goalId: string) {
+    const task = tasks.value.find(t => t.id === taskId)
+    const goal = goals.value.find(g => g.id === goalId)
+    if (task?.goalIds) task.goalIds = task.goalIds.filter(id => id !== goalId)
+    if (goal) goal.taskIds = goal.taskIds.filter(id => id !== taskId)
+    if (task) task.updatedAt = Date.now()
+    if (goal) goal.updatedAt = Date.now()
+  }
+
+  /** Compute progress percentage for a goal based on linked task stages. */
+  function getGoalProgress(goalId: string): number {
+    const goal = goals.value.find(g => g.id === goalId)
+    if (!goal || goal.taskIds.length === 0) return 0
+    const linkedTasks = tasks.value.filter(t => goal.taskIds.includes(t.id))
+    if (linkedTasks.length === 0) return 0
+    const doneCount = linkedTasks.filter(t => wf.isFinalStage(t.stage)).length
+    return Math.round((doneCount / linkedTasks.length) * 100)
+  }
+
+  const goalProgress = computed(() => {
+    const map: Record<string, number> = {}
+    for (const goal of goals.value) {
+      map[goal.id] = getGoalProgress(goal.id)
+    }
+    return map
+  })
+
+  /** Request an LLM-generated report via the extension host. */
+  function requestReport(prompt?: string) {
+    reportContent.value = ''
+    reportLoading.value = true
+    // Serialize current tasks/goals for the extension host
+    const taskData = tasks.value.map(t => ({
+      id: t.id, title: t.title, stage: t.stage,
+      progress: t.progress, taskType: t.taskType, assignee: t.assignee,
+      goalIds: t.goalIds,
+    }))
+    const goalData = goals.value.map(g => ({
+      id: g.id, title: g.title, description: g.description,
+      deadline: g.deadline, taskIds: g.taskIds,
+      createdAt: g.createdAt, updatedAt: g.updatedAt,
+    }))
+    // The extension composable will pick this up
+    return { tasks: taskData, goals: goalData, prompt }
+  }
+
+  /** Called when the extension host returns the generated report. */
+  function setReportContent(content: string) {
+    reportContent.value = content
+    reportLoading.value = false
+  }
+
+  // ─── Goal Panel ───────────────────────────────────────────
+
+  function openGoalDetail(goalId: string) {
+    selectedGoalId.value = goalId
+    showGoalDetail.value = true
+  }
+
+  function closeGoalDetail() {
+    showGoalDetail.value = false
+    selectedGoalId.value = null
+  }
+
+  function openReportPanel() {
+    showReportPanel.value = true
+  }
+
+  function closeReportPanel() {
+    showReportPanel.value = false
+  }
+
+  function dismissSplash() {
+    showSplashScreen.value = false
+  }
+
+  /** Migrate all tasks to valid stages when the workflow changes. */
+  function migrateTaskStages() {
+    const stageIds = new Set(wf.stages.value.map(s => s.id))
+    const first = wf.firstStage.value
+    const finals = wf.finalStages.value
+    const finalId = finals.length > 0 ? finals[0] : first
+
+    for (const task of tasks.value) {
+      if (stageIds.has(task.stage)) continue
+      // Map to closest equivalent
+      const oldStage = task.stage
+      if (task.stage === 'merge' || task.stage === 'done') {
+        task.stage = finalId
+      } else if (task.stage === 'idea' || task.stage === 'todo') {
+        task.stage = first
+      } else {
+        // Unknown stage — put in first
+        task.stage = first
+      }
+      if (oldStage !== task.stage) {
+        addActivity(`📋 Task "${task.title}" migrated: ${oldStage} → ${task.stage}`, 'human_action')
+      }
+    }
+  }
+
   return {
     // State
     tasks,
@@ -959,8 +1231,13 @@ function useBoard() {
     assignAgent,
     reassignAgent,
     suggestAgents,
+    // Task deletion
+    deleteTask,
     // Comments
     addComment,
+    askAgentViaComment,
+    editComment,
+    togglePinComment,
     deleteComment,
     // HITL (Human-in-the-Loop)
     pendingDecisionTasks,
@@ -970,6 +1247,34 @@ function useBoard() {
     // Inter-Agent Discussion
     addAgentMessage,
     resolveAgentMessage,
+    // Goals
+    goals,
+    createGoal,
+    updateGoal,
+    deleteGoal,
+    linkTaskToGoal,
+    unlinkTaskFromGoal,
+    getGoalProgress,
+    goalProgress,
+    requestReport,
+    setReportContent,
+    reportContent,
+    reportLoading,
+    // Goal Panel
+    showGoalDetail,
+    selectedGoalId,
+    openGoalDetail,
+    closeGoalDetail,
+    // Report
+    showReportPanel,
+    openReportPanel,
+    closeReportPanel,
+    // Splash
+    showSplashScreen,
+    dismissSplash,
+    // Board Type
+    boardType,
+    migrateTaskStages,
     // Callbacks
     onTaskMoved: (cb: TaskMoveCallback) => {
       taskMoveCallbacks.push(cb)

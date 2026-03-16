@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import type { TaskData, SessionData, CommentData, TaskMetricsData } from './protocol'
+import type { TaskData, SessionData, CommentData, TaskMetricsData, GoalData } from './protocol'
 
 // ─── YAML-like frontmatter helpers (no dependency needed) ───────
 
@@ -9,7 +9,7 @@ function toFrontmatter(obj: Record<string, any>): string {
   for (const [key, value] of Object.entries(obj)) {
     if (value === undefined || value === null) continue
     if (Array.isArray(value)) {
-      lines.push(`${key}: [${value.map(v => typeof v === 'string' ? `"${v}"` : v).join(', ')}]`)
+      lines.push(`${key}: [${value.map(v => typeof v === 'string' ? `"${v}"` : typeof v === 'object' && v !== null ? JSON.stringify(v) : v).join(', ')}]`)
     } else if (typeof value === 'object') {
       lines.push(`${key}: ${JSON.stringify(value)}`)
     } else if (typeof value === 'string') {
@@ -68,9 +68,14 @@ function parseFrontmatter(content: string): { meta: Record<string, any>; body: s
 // ─── Markdown section parser / writer ───────────────────────────
 
 function extractSection(body: string, heading: string): string {
-  const regex = new RegExp(`^## ${heading}\\s*\\n([\\s\\S]*?)(?=^## |$)`, 'm')
-  const match = body.match(regex)
-  return match ? match[1].trim() : ''
+  const startIdx = body.search(new RegExp(`^## ${heading}\\s*$`, 'm'))
+  if (startIdx === -1) return ''
+  const afterHeading = body.indexOf('\n', startIdx)
+  if (afterHeading === -1) return ''
+  const rest = body.slice(afterHeading + 1)
+  const nextHeading = rest.search(/^## /m)
+  const content = nextHeading === -1 ? rest : rest.slice(0, nextHeading)
+  return content.trim()
 }
 
 function formatTimestamp(ts: number): string {
@@ -92,7 +97,6 @@ function taskToMarkdown(task: TaskData, sessions: SessionData[]): string {
     id: task.id,
     title: task.title,
     stage: task.stage,
-    priority: task.priority,
     workspaceId: task.workspaceId,
     assignee: task.assignee,
     manuallyAssigned: task.manuallyAssigned,
@@ -104,6 +108,8 @@ function taskToMarkdown(task: TaskData, sessions: SessionData[]): string {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     blockedReason: task.blockedReason,
+    goalIds: task.goalIds,
+    outputPath: task.outputPath,
   }))
 
   // Title + Description
@@ -152,7 +158,12 @@ function taskToMarkdown(task: TaskData, sessions: SessionData[]): string {
     sections.push('## Comments')
     sections.push('')
     for (const c of task.comments) {
-      sections.push(`### ${c.author} (${formatTimestamp(c.timestamp)})`)
+      const meta: string[] = []
+      if (c.type && c.type !== 'comment') meta.push(`type:${c.type}`)
+      if (c.pinned) meta.push('pinned')
+      if (c.editedAt) meta.push(`edited:${formatTimestamp(c.editedAt)}`)
+      const metaSuffix = meta.length > 0 ? ` [${meta.join(', ')}]` : ''
+      sections.push(`### ${c.author} (${formatTimestamp(c.timestamp)})${metaSuffix}`)
       if (c.replyToId) sections.push(`> Reply to: ${c.replyToId}`)
       sections.push('')
       sections.push(c.content)
@@ -230,12 +241,24 @@ function markdownToTask(content: string): { task: TaskData; sessions: SessionDat
   if (commentsRaw) {
     const commentBlocks = commentsRaw.split(/^### /m).filter(Boolean)
     for (const block of commentBlocks) {
-      const headerMatch = block.match(/^(.+?) \((.+?)\)\s*\n/)
+      const headerMatch = block.match(/^(.+?) \((.+?)\)(?:\s*\[(.+?)\])?\s*\n/)
       if (headerMatch) {
         const replyMatch = block.match(/^> Reply to: (.+)$/m)
         const content = block.slice(headerMatch[0].length)
           .replace(/^> Reply to: .+\n\n?/, '')
           .trim()
+        // Parse metadata from brackets: [type:note, pinned, edited:2026-01-01 00:00:00]
+        let commentType: string | undefined
+        let pinned = false
+        let editedAt: number | undefined
+        if (headerMatch[3]) {
+          const parts = headerMatch[3].split(',').map((s: string) => s.trim())
+          for (const part of parts) {
+            if (part.startsWith('type:')) commentType = part.slice(5)
+            else if (part === 'pinned') pinned = true
+            else if (part.startsWith('edited:')) editedAt = parseTimestamp(part.slice(7))
+          }
+        }
         comments.push({
           id: `cmt-${comments.length}-${Date.now()}`,
           taskId: meta.id || '',
@@ -243,6 +266,9 @@ function markdownToTask(content: string): { task: TaskData; sessions: SessionDat
           timestamp: parseTimestamp(headerMatch[2]),
           content,
           replyToId: replyMatch?.[1],
+          type: commentType as any,
+          pinned: pinned || undefined,
+          editedAt,
         })
       }
     }
@@ -340,7 +366,6 @@ function markdownToTask(content: string): { task: TaskData; sessions: SessionDat
     title: meta.title || 'Untitled',
     description: description || '',
     stage: meta.stage || 'idea',
-    priority: meta.priority || 'medium',
     workspaceId: meta.workspaceId || '',
     assignee: meta.assignee || null,
     manuallyAssigned: meta.manuallyAssigned || false,
@@ -356,9 +381,67 @@ function markdownToTask(content: string): { task: TaskData; sessions: SessionDat
     comments,
     metrics,
     pullRequest,
+    goalIds: meta.goalIds,
+    outputPath: meta.outputPath,
   }
 
   return { task, sessions }
+}
+
+// ─── Goal → Markdown ────────────────────────────────────────────
+
+function goalToMarkdown(goal: GoalData): string {
+  const sections: string[] = []
+
+  sections.push(toFrontmatter({
+    id: goal.id,
+    title: goal.title,
+    owner: goal.owner,
+    deadline: goal.deadline,
+    taskIds: goal.taskIds,
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+  }))
+
+  sections.push('')
+  sections.push(`# ${goal.title}`)
+  sections.push('')
+
+  if (goal.description) {
+    sections.push('## Description')
+    sections.push('')
+    sections.push(goal.description)
+    sections.push('')
+  }
+
+  if (goal.taskIds.length > 0) {
+    sections.push('## Linked Tasks')
+    sections.push('')
+    for (const tid of goal.taskIds) {
+      sections.push(`- ${tid}`)
+    }
+    sections.push('')
+  }
+
+  return sections.join('\n')
+}
+
+// ─── Markdown → Goal ────────────────────────────────────────────
+
+function markdownToGoal(content: string): GoalData {
+  const { meta, body } = parseFrontmatter(content)
+  const description = extractSection(body, 'Description')
+
+  return {
+    id: meta.id || `goal-${Date.now()}`,
+    title: meta.title || 'Untitled Goal',
+    description: description || undefined,
+    owner: meta.owner,
+    deadline: meta.deadline,
+    taskIds: meta.taskIds || [],
+    createdAt: meta.createdAt || Date.now(),
+    updatedAt: meta.updatedAt || Date.now(),
+  }
 }
 
 // ─── File-based State Manager ───────────────────────────────────
@@ -372,7 +455,7 @@ function markdownToTask(content: string): { task: TaskData; sessions: SessionDat
  *     _board.yaml                   (optional board-level settings in future)
  *
  * Each task file contains:
- *   - YAML frontmatter with metadata (id, stage, priority, etc.)
+ *   - YAML frontmatter with metadata (id, stage, etc.)
  *   - Markdown body with description, events, comments, sessions
  */
 export class MarkdownStateManager {
@@ -527,5 +610,58 @@ export class MarkdownStateManager {
     }
 
     await fs.writeFile(filePath, content, 'utf-8')
+  }
+
+  // ─── Goal persistence ──────────────────────────────────────
+
+  async saveGoals(goals: GoalData[]): Promise<void> {
+    await this.init()
+
+    const written = new Set<string>()
+    for (const goal of goals) {
+      const filename = this.goalFilename(goal)
+      const content = goalToMarkdown(goal)
+      await fs.writeFile(path.join(this.tasksDir, filename), content, 'utf-8')
+      written.add(filename)
+    }
+
+    // Clean up orphaned goal files
+    try {
+      const existing = await fs.readdir(this.tasksDir)
+      for (const file of existing) {
+        if (file.startsWith('GOAL-') && file.endsWith('.md') && !written.has(file)) {
+          await fs.unlink(path.join(this.tasksDir, file))
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  async loadGoals(): Promise<GoalData[]> {
+    await this.init()
+    const goals: GoalData[] = []
+    try {
+      const files = await fs.readdir(this.tasksDir)
+      for (const file of files) {
+        if (!file.startsWith('GOAL-') || !file.endsWith('.md')) continue
+        try {
+          const content = await fs.readFile(path.join(this.tasksDir, file), 'utf-8')
+          goals.push(markdownToGoal(content))
+        } catch (e) {
+          console.error(`[MarkdownState] Failed to parse ${file}:`, e)
+        }
+      }
+    } catch { /* dir doesn't exist */ }
+    goals.sort((a, b) => a.createdAt - b.createdAt)
+    return goals
+  }
+
+  private goalFilename(goal: GoalData): string {
+    const slug = goal.title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .slice(0, 40)
+      .replace(/-+$/, '')
+    return `GOAL-${goal.id.slice(0, 12)}-${slug || 'untitled'}.md`
   }
 }

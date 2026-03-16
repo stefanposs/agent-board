@@ -7,6 +7,7 @@ import { useWorkflow } from './useWorkflow'
 // When running standalone: uses the old simulation for demo purposes
 
 let simulationIntervals: ReturnType<typeof setInterval>[] = []
+const MAX_CONCURRENT_AGENTS = 3 // Don't overwhelm the LLM API
 
 /** Fallback prompts when workflow config has no promptTemplate. */
 const FALLBACK_PROMPTS: Record<string, Record<string, string>> = {
@@ -45,9 +46,17 @@ function getAgentPromptForStage(agentRole: string, taskTitle: string, taskDescri
   return template.replace('{title}', taskTitle).replace('{description}', taskDescription)
 }
 
+/** Send a log message from the webview to the extension host Output panel. */
+function logToHost(ext: ReturnType<typeof useExtension>, msg: string) {
+  console.log(`[Sim] ${msg}`)
+  ext.post({ type: 'webview-log', message: msg })
+}
+
 export function startAgents() {
   const board = useBoard()
   const ext = useExtension()
+
+  logToHost(ext, `startAgents() called — running=${board.simulationRunning.value}, isWebview=${ext.isWebview.value}, agents=${board.agents.value.length}, tasks=${board.tasks.value.length}`)
 
   if (board.simulationRunning.value) return
   board.simulationRunning.value = true
@@ -55,7 +64,7 @@ export function startAgents() {
   board.addToast('Agents activated', 'info')
 
   if (!ext.isWebview.value) {
-    // Standalone mode: run demo simulation
+    logToHost(ext, '⚠️ NOT in webview mode — falling back to standalone simulation')
     startStandaloneSimulation()
     return
   }
@@ -63,33 +72,55 @@ export function startAgents() {
   // Extension mode: run real orchestration loop
   const wf = useWorkflow()
 
-  for (const agent of board.agents.value) {
-    const interval = setInterval(() => {
-      if (!board.simulationRunning.value) return
-      if (agent.status === 'working') return // Agent is busy
+  logToHost(ext, `🚀 Extension orchestration: ${board.agents.value.length} agents, ${board.tasks.value.length} tasks`)
+  logToHost(ext, `  Agents: ${board.agents.value.map(a => `${a.id}(${a.role})`).join(', ')}`)
+  logToHost(ext, `  Tasks: ${board.tasks.value.map(t => `${t.id}(stage=${t.stage},assignee=${t.assignee},manual=${t.manuallyAssigned})`).join(', ')}`)
 
-      const eligibleStages = wf.agentStageMappings.value
-            .filter(m => m.role === agent.role)
-            .flatMap(m => m.stages)
+  // Prioritize: first dispatch agents that have manually assigned tasks
+  const assignedAgents: typeof board.agents.value = []
+  const otherAgents: typeof board.agents.value = []
+  for (const agent of board.agents.value) {
+    const hasAssignment = board.tasks.value.some(t => t.manuallyAssigned && t.assignee === agent.id && !wf.isFinalStage(t.stage))
+    if (hasAssignment) assignedAgents.push(agent)
+    else otherAgents.push(agent)
+  }
+  const orderedAgents = [...assignedAgents, ...otherAgents]
+  logToHost(ext, `  Priority agents (assigned): ${assignedAgents.map(a => a.id).join(', ') || '(none)'}`)
+
+  function checkAgent(agent: typeof board.agents.value[0]) {
+    try {
+      if (!board.simulationRunning.value) return
+      if (agent.status === 'working') return
+
+      // Limit concurrent agents to avoid overwhelming the LLM API
+      const workingCount = board.agents.value.filter(a => a.status === 'working').length
+      const isAssigned = board.tasks.value.some(t => t.manuallyAssigned && t.assignee === agent.id && !wf.isFinalStage(t.stage))
+      if (workingCount >= MAX_CONCURRENT_AGENTS && !isAssigned) {
+        logToHost(ext, `⏳ "${agent.name}" waiting — ${workingCount} agents already working`)
+        return
+      }
+
       const eligibleTasks = board.tasks.value.filter(
         (t) =>
-          eligibleStages.includes(t.stage) &&
           !wf.isFinalStage(t.stage) &&
           t.approvalStatus !== 'pending' &&
           !(t.pendingDecision && t.pendingDecision.status === 'pending') &&
-          // Respect manual assignment: only the assigned agent may work on locked tasks
-          (!t.manuallyAssigned || t.assignee === agent.id || !t.assignee),
+          // Agent works on any non-final task: either assigned to it, or unassigned
+          (!t.manuallyAssigned || t.assignee === agent.id),
       )
 
-      if (eligibleTasks.length === 0) return
+      logToHost(ext, `checkAgent "${agent.name}" (${agent.role}): eligible=${eligibleTasks.length}/${board.tasks.value.length}`)
 
-      // Prioritize tasks assigned to this agent, then score by priority + skill match
-      const priorityOrder = ['critical', 'high', 'medium', 'low']
+      if (eligibleTasks.length === 0) {
+        for (const t of board.tasks.value) {
+          logToHost(ext, `  skip "${t.title}": stage=${t.stage} final=${wf.isFinalStage(t.stage)} approval=${t.approvalStatus} manual=${t.manuallyAssigned} assignee=${t.assignee} agent=${agent.id}`)
+        }
+        return
+      }
+
+      // Prioritize tasks assigned to this agent, then score by skill match
       const scoredTasks = eligibleTasks.map(t => {
-        // Direct assignment: if this agent is the assignee, max priority
         const assigneeBonus = t.assignee === agent.id ? 1.0 : 0.0
-
-        const priorityScore = (4 - priorityOrder.indexOf(t.priority)) / 4
         const neededSkills = t.requiredSkills || []
         let skillScore = 0
         if (neededSkills.length > 0) {
@@ -99,39 +130,53 @@ export function startAgents() {
           ).length
           skillScore = hits / neededSkills.length
         }
-        // Weighted: assignee bonus dominates, then priority + skill
-        const totalScore = assigneeBonus * 0.50 + priorityScore * 0.20 + skillScore * 0.30
+        const totalScore = assigneeBonus * 0.60 + skillScore * 0.40
         return { task: t, score: totalScore }
       })
       scoredTasks.sort((a, b) => b.score - a.score)
       const task = scoredTasks[0].task
 
-      // Generate prompt for this agent + task stage
       const prompt = getAgentPromptForStage(agent.role, task.title, task.description, task.stage)
-
-      // Get or create session, include history for multi-turn
       const session = board.getOrCreateSession(task.id, agent.id)
       const sessionMessages = session.messages.map((m) => ({
         role: m.role,
         content: m.content,
       }))
-
-      // Add user message to session
       board.addSessionMessage(session.id, 'user', prompt)
 
-      // Run agent via extension
-      ext.runAgent(agent.id, task.id, prompt, sessionMessages)
+      const ws = board.getWorkspace(task.workspaceId)
+      const workspacePath = ws?.localPath
+      const branch = task.branch
+
+      logToHost(ext, `▶ RUNNING "${agent.name}" → "${task.title}", ws=${workspacePath || 'none'}, branch=${branch || 'none'}`)
+      board.addToast(`🤖 ${agent.name} → "${task.title}"`, 'info')
+      board.addActivity(`▶ **${agent.name}** started on "${task.title}"`, 'agent_action')
+
+      ext.runAgent(agent.id, task.id, prompt, sessionMessages, workspacePath, branch)
       board.updateAgentStatus(agent.id, 'working', task.id)
 
-      // Assign agent to task if not already
       if (!task.assignedAgents.includes(agent.id)) {
         task.assignedAgents.push(agent.id)
       }
-
-    }, 15000) // Check every 15 seconds
-
-    simulationIntervals.push(interval)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logToHost(ext, `❌ checkAgent ERROR for "${agent.name}": ${msg}`)
+      board.addToast(`Agent error: ${agent.name} — ${msg}`, 'error')
+    }
   }
+
+  // Stagger agent starts: assigned agents first (immediately), then others with delays
+  let delay = 500
+  for (const agent of orderedAgents) {
+    setTimeout(() => {
+      logToHost(ext, `⏱️ First check for "${agent.name}" (${agent.role})`)
+      checkAgent(agent)
+    }, delay)
+    const interval = setInterval(() => checkAgent(agent), 15000)
+    simulationIntervals.push(interval)
+    delay += 300 // Stagger by 300ms to avoid overwhelming the LLM API
+  }
+  board.addToast(`🚀 Dispatching ${orderedAgents.length} agents (${assignedAgents.length} assigned)`, 'success')
 }
 
 export function stopAgents() {
@@ -154,6 +199,9 @@ export function stopAgents() {
 
 export function toggleSimulation() {
   const board = useBoard()
+  const ext = useExtension()
+  // Always send diagnostic to extension host
+  ext.post({ type: 'webview-log', message: `toggleSimulation called — running=${board.simulationRunning.value}` })
   if (board.simulationRunning.value) {
     stopAgents()
   } else {
@@ -184,13 +232,14 @@ function startStandaloneSimulation() {
         .flatMap(m => m.stages)
       const eligibleTasks = board.tasks.value.filter(
         (t) =>
-          agentStages.includes(t.stage) &&
           !wf.isFinalStage(t.stage) &&
           !wf.stageHasApprovalGate(t.stage) &&
           t.approvalStatus !== 'pending' &&
           !(t.pendingDecision && t.pendingDecision.status === 'pending') &&
-          // Respect manual assignment: only the assigned agent may work on locked tasks
-          (!t.manuallyAssigned || t.assignee === agent.id || !t.assignee),
+          // Manually assigned to THIS agent → bypass stage/role filter, agent leads the task
+          (t.manuallyAssigned && t.assignee === agent.id
+            ? true
+            : agentStages.includes(t.stage) && (!t.manuallyAssigned || t.assignee === agent.id)),
       )
 
       if (eligibleTasks.length === 0) {

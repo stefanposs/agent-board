@@ -10,7 +10,7 @@ import { CliAgentService } from './CliAgentService'
 import { StateManager } from './StateManager'
 import { MarkdownStateManager } from './MarkdownStateManager'
 import { BoardSettingsManager } from './BoardSettings'
-import { DEFAULT_WORKFLOW } from './protocol'
+import { DEFAULT_WORKFLOW, WORKFLOW_PRESETS } from './protocol'
 import { BackendRegistry } from './AgentBackend'
 
 import * as crypto from 'crypto'
@@ -103,6 +103,14 @@ export class WebviewProvider {
   private async onMessage(msg: WebviewMessage) {
     this.logInfo(`← Webview msg: ${msg.type}${msg.type === 'run-agent' ? ` agentId=${msg.agentId} taskId=${msg.taskId}` : ''}${msg.type === 'create-branch' ? ` branch=${msg.branchName} path=${msg.workspacePath}` : ''}`)
     switch (msg.type) {
+      case 'webview-log':
+        this.logInfo(`[Webview] ${msg.message}`)
+        // Also show first few logs as notification for debugging
+        if (msg.message.includes('toggleSimulation') || msg.message.includes('startAgents') || msg.message.includes('RUNNING')) {
+          vscode.window.showInformationMessage(`[Sim] ${msg.message}`)
+        }
+        return
+
       case 'ready':
         return this.sendInit()
 
@@ -191,16 +199,50 @@ export class WebviewProvider {
         this.state.saveAll(msg.tasks, msg.sessions) // backup in workspaceState
         return this.post({ type: 'state-saved' })
 
-      case 'load-state': {
-        let loaded: { tasks: any[]; sessions: any[] }
+      case 'delete-task':
         if (this.mdState) {
-          loaded = await this.mdState.loadAll()
-          this.logInfo(`📁 Loaded ${loaded.tasks.length} tasks from .tasks/ markdown`)
-        } else {
-          loaded = this.state.loadAll()
+          await this.mdState.deleteTask(msg.taskId)
+          this.logInfo(`🗑️ Deleted task file for ${msg.taskId}`)
         }
-        return this.post({ type: 'state-loaded', tasks: loaded.tasks, sessions: loaded.sessions })
+        return
+
+      case 'save-goals':
+        if (this.mdState) {
+          await this.mdState.saveGoals(msg.goals)
+          this.logInfo(`📁 Saved ${msg.goals.length} goals to .tasks/ markdown`)
+        }
+        this.state.saveGoals(msg.goals) // backup in workspaceState
+        return
+
+      case 'load-state': {
+        let tasks: any[], sessions: any[], goals: any[]
+        if (this.mdState) {
+          const loaded = await this.mdState.loadAll()
+          const loadedGoals = await this.mdState.loadGoals()
+          tasks = loaded.tasks
+          sessions = loaded.sessions
+          goals = loadedGoals
+          this.logInfo(`📁 Loaded ${loaded.tasks.length} tasks, ${loadedGoals.length} goals from .tasks/ markdown`)
+        } else {
+          const loaded = this.state.loadAll()
+          tasks = loaded.tasks
+          sessions = loaded.sessions
+          goals = loaded.goals
+        }
+        return this.post({ type: 'state-loaded', tasks, sessions, goals })
       }
+
+      case 'generate-report':
+        return this.generateReport(msg.tasks, msg.goals, msg.prompt)
+
+      case 'dismiss-splash':
+        if (this.boardSettings) {
+          const settings = this.boardSettings.get()
+          settings.board.showSplashOnStart = false
+          await this.boardSettings.save(settings)
+          this.logInfo('🚫 Splash screen disabled')
+        }
+        return
 
       case 'detect-backends': {
         const backends = await this.registry.detectAvailable()
@@ -215,6 +257,20 @@ export class WebviewProvider {
           settings.backends.default = msg.backendId
           await this.boardSettings.save(settings)
           this.logInfo(`🔌 Default backend set to: ${msg.backendId}`)
+        }
+        return
+      }
+
+      case 'set-board-type': {
+        if (this.boardSettings) {
+          const settings = this.boardSettings.get()
+          settings.boardType = msg.boardType
+          // Clear custom workflow when switching to a preset
+          delete settings.workflow
+          await this.boardSettings.save(settings)
+          this.logInfo(`📋 Board type set to: ${msg.boardType}`)
+          // Re-send init so the webview picks up the new workflow
+          await this.sendInit()
         }
         return
       }
@@ -264,6 +320,11 @@ export class WebviewProvider {
           this.post({ type: 'notification-action', action: 'show-task' })
         }
         return
+      }
+
+      case 'open-file': {
+        const fileUri = vscode.Uri.file(msg.filePath)
+        return vscode.window.showTextDocument(fileUri)
       }
 
       case 'open-folder': {
@@ -384,6 +445,19 @@ export class WebviewProvider {
       persisted = this.state.loadAll()
     }
 
+    // Load persisted goals
+    let persistedGoals: any[] = []
+    if (this.mdState) {
+      persistedGoals = await this.mdState.loadGoals()
+      this.logInfo(`📁 Loaded ${persistedGoals.length} goals from .tasks/ markdown files`)
+    }
+
+    // Resolve board type and workflow
+    const boardType = yamlSettings?.boardType ?? 'software-engineering'
+    const resolvedWorkflow = yamlSettings?.workflow
+      ?? WORKFLOW_PRESETS[boardType]?.workflow
+      ?? DEFAULT_WORKFLOW
+
     const data: InitData = {
       workspaces,
       agents,
@@ -392,17 +466,21 @@ export class WebviewProvider {
         workspacePaths,
         agentConfigPath,
         agentRepoPaths,
+        boardType,
         workflow: yamlSettings?.workflow,
+        showSplashOnStart: yamlSettings?.board?.showSplashOnStart ?? true,
       },
       persistedTasks: persisted.tasks,
       persistedSessions: persisted.sessions,
+      persistedGoals,
       backends,
       defaultBackend,
-      workflow: yamlSettings?.workflow ?? DEFAULT_WORKFLOW,
+      workflow: resolvedWorkflow,
+      boardType,
     }
     this.logInfo(`Init: ${workspaces.length} workspaces [${workspaces.map(w => `${w.name}(${w.localPath})`).join(', ')}]`)
     this.logInfo(`Init: ${agents.length} agents [${agents.map(a => `${a.name}(${a.role})`).join(', ')}]`)
-    this.logInfo(`Init: ${models.length} models, ${persisted.tasks?.length || 0} persisted tasks, ${persisted.sessions?.length || 0} persisted sessions`)
+    this.logInfo(`Init: ${models.length} models, ${persisted.tasks?.length || 0} persisted tasks, ${persisted.sessions?.length || 0} persisted sessions, ${persistedGoals.length} goals`)
     this.post({ type: 'init', data })
   }
 
@@ -420,6 +498,63 @@ export class WebviewProvider {
     }
     const workspaces = await this.scanner.scanPaths(paths)
     this.post({ type: 'workspaces-updated', workspaces })
+  }
+
+  private async generateReport(tasks: any[], goals: any[], userPrompt?: string) {
+    this.logInfo(`📊 Generating LLM report (${tasks.length} tasks, ${goals.length} goals)`)
+
+    // Build a structured data summary for the prompt
+    const now = new Date().toISOString().split('T')[0]
+    const dataLines: string[] = []
+    dataLines.push(`Date: ${now}`)
+    dataLines.push(`Total tasks: ${tasks.length}`)
+    dataLines.push(`Total goals: ${goals.length}`)
+    dataLines.push('')
+
+    if (goals.length > 0) {
+      dataLines.push('## Goals')
+      for (const g of goals) {
+        const linked = tasks.filter((t: any) => g.taskIds?.includes(t.id))
+        const done = linked.filter((t: any) => t.stage === 'done' || t.stage === 'archived').length
+        dataLines.push(`- "${g.title}" — ${done}/${linked.length} tasks done${g.deadline ? `, deadline: ${new Date(g.deadline).toISOString().split('T')[0]}` : ''}`)
+      }
+      dataLines.push('')
+    }
+
+    if (tasks.length > 0) {
+      dataLines.push('## Tasks')
+      for (const t of tasks) {
+        dataLines.push(`- "${t.title}" | stage: ${t.stage} | progress: ${t.progress}%`)
+      }
+      dataLines.push('')
+    }
+
+    const systemPrompt = `You are a project status report generator. Given board data (tasks, goals), produce a clear, concise, well-structured Markdown status report. Focus on:
+- Overall progress summary
+- Goal status and deadlines
+- Blocked items (highlight risks)
+- Actionable next steps
+
+Keep it professional, scannable, and useful for a team standup or stakeholder update. Use emoji sparingly for visual scanning. Write in the same language as the task titles (if they are German, write in German).`
+
+    const userMessage = userPrompt
+      ? `Generate a status report for my board. ${userPrompt}\n\nBoard data:\n${dataLines.join('\n')}`
+      : `Generate a status report for my board.\n\nBoard data:\n${dataLines.join('\n')}`
+
+    try {
+      const result = await this.llm.sendRequest({
+        model: 'copilot-claude-sonnet-4',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+      })
+      this.logInfo(`📊 Report generated (${result.tokensUsed} tokens, model: ${result.model})`)
+      this.post({ type: 'report-generated', content: result.content })
+    } catch (e: any) {
+      this.logError(`📊 Report generation failed: ${e.message}`)
+      this.post({ type: 'report-generated', content: `**Report generation failed**\n\n${e.message}\n\nMake sure GitHub Copilot is active and signed in.` })
+    }
   }
 
   private async runAgent(agentId: string, taskId: string, prompt: string, sessionMessages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>, workspacePath?: string, branch?: string) {
