@@ -200,7 +200,9 @@ export class ClineBackend implements AgentBackend {
         try {
           await vscode.env.clipboard.writeText(taskPrompt)
           vscode.window.showInformationMessage('Cline command failed. Task prompt copied to clipboard. Open Cline and paste.', 'Open Cline').then(sel => {
-            if (sel === 'Open Cline') vscode.commands.executeCommand('workbench.view.extension.cline')
+            if (sel === 'Open Cline') {
+              Promise.resolve(vscode.commands.executeCommand('workbench.view.extension.cline')).catch(() => {})
+            }
           })
           callbacks.onOutput(`📋 Prompt copied to clipboard. Open Cline and paste to start the task.\n`)
           callbacks.onLog('Copied prompt to clipboard — Cline commands unavailable')

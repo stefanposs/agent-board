@@ -251,7 +251,7 @@ function useBoard() {
       message,
       type,
     })
-    if (activityFeed.value.length > 50) activityFeed.value.pop()
+    if (activityFeed.value.length > 200) activityFeed.value.pop()
   }
 
   function addToast(message: string, type: 'success' | 'error' | 'info' | 'warning') {
@@ -592,7 +592,7 @@ function useBoard() {
     return session
   }
 
-  /** Add a message to a session. */
+  /** Add a message to a session. Caps at 100 messages per session (sliding window). */
   function addSessionMessage(
     sessionId: string,
     role: 'user' | 'assistant' | 'system',
@@ -602,6 +602,8 @@ function useBoard() {
     const session = sessions.value.find((s) => s.id === sessionId)
     if (!session) throw new Error(`Session ${sessionId} not found`)
 
+    const MAX_SESSION_MESSAGES = 100
+
     const msg: SessionMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       role,
@@ -610,6 +612,12 @@ function useBoard() {
       tokensUsed,
     }
     session.messages.push(msg)
+
+    // Sliding window: keep only the most recent messages
+    if (session.messages.length > MAX_SESSION_MESSAGES) {
+      session.messages = session.messages.slice(-MAX_SESSION_MESSAGES)
+    }
+
     session.updatedAt = Date.now()
     if (tokensUsed) session.totalTokensUsed += tokensUsed
     return msg
@@ -642,8 +650,8 @@ function useBoard() {
     }
   }
 
-  /** Generate a branch name from task title. */
-  function slugifyBranchName(title: string, prefix = 'feature'): string {
+  /** Generate a branch name from task title. Appends short ID for uniqueness. */
+  function slugifyBranchName(title: string, prefix = 'feature', taskId?: string): string {
     const slug = title
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, '')
@@ -651,7 +659,8 @@ function useBoard() {
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 50)
-    return `${prefix}/${slug}`
+    const suffix = taskId ? `-${taskId.slice(-6)}` : ''
+    return `${prefix}/${slug}${suffix}`
   }
 
   /** Task types that should get a feature branch when moved to in-progress. */

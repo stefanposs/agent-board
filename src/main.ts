@@ -5,6 +5,7 @@ import { useExtension } from './composables/useExtension'
 import { useBoard } from './composables/useBoard'
 import { useWorkflow } from './composables/useWorkflow'
 import { useNotifications } from './composables/useNotifications'
+import { useHITL } from './composables/useHITL'
 import { debouncedSave, loadFromLocalStorage, initAutoSave } from './composables/usePersistence'
 import type { AgentDecision, PendingDecision, Agent } from './domain/types'
 import { MAX_FEEDBACK_LOOPS } from './domain/types'
@@ -46,18 +47,30 @@ if (ext.isWebview.value) {
     board.addToast(`🤖 ${msg.agents.length} agents loaded`, 'success')
   })
 
-  // Track streaming output per agent for session storage
-  const agentStreamBuffers = new Map<string, { content: string; taskId: string }>()
+  // Track streaming output per agent for session storage (keyed by agentId:taskId)
+  const agentStreamBuffers = new Map<string, { content: string; taskId: string; createdAt: number }>()
+
+  // Periodic cleanup of stale stream buffers (older than 30 minutes)
+  setInterval(() => {
+    const staleThreshold = Date.now() - 30 * 60 * 1000
+    for (const [key, buf] of agentStreamBuffers) {
+      if (buf.createdAt < staleThreshold) {
+        agentStreamBuffers.delete(key)
+      }
+    }
+  }, 5 * 60 * 1000)
 
   // Listen for agent output (LLM responses)
   ext.onMessage('agent-output', (msg) => {
+    const bufferKey = msg.taskId ? `${msg.agentId}:${msg.taskId}` : msg.agentId
+
     if (msg.tokensUsed !== undefined && msg.tokensUsed !== null) {
       // Final message — store accumulated response in session
       if (msg.tokensUsed > 0) {
         board.updateAgentUsage(msg.agentId, msg.tokensUsed)
       }
 
-      const buffer = agentStreamBuffers.get(msg.agentId)
+      const buffer = agentStreamBuffers.get(bufferKey) || agentStreamBuffers.get(msg.agentId)
       if (buffer && buffer.content.trim()) {
         // Use taskId from message if available (fixes race condition)
         const effectiveTaskId = msg.taskId || buffer.taskId
@@ -73,10 +86,11 @@ if (ext.isWebview.value) {
           setTimeout(() => handleAgentDecision(msg.agentId, effectiveTaskId, decision), 1500)
         }
       }
-      agentStreamBuffers.delete(msg.agentId)
+      agentStreamBuffers.delete(bufferKey)
+      agentStreamBuffers.delete(msg.agentId) // clean up legacy key too
     } else if (msg.content) {
       // Streaming chunk — accumulate
-      const existing = agentStreamBuffers.get(msg.agentId)
+      const existing = agentStreamBuffers.get(bufferKey)
       if (existing) {
         existing.content += msg.content
         // Patch taskId if it came from the message
@@ -85,7 +99,7 @@ if (ext.isWebview.value) {
         }
       } else {
         // Buffer not yet created — create it with taskId from message if available
-        agentStreamBuffers.set(msg.agentId, { content: msg.content, taskId: msg.taskId || '' })
+        agentStreamBuffers.set(bufferKey, { content: msg.content, taskId: msg.taskId || '', createdAt: Date.now() })
       }
     }
   })
@@ -98,12 +112,13 @@ if (ext.isWebview.value) {
     }
     // Track which task an agent is working on for stream buffering
     if (msg.status === 'working' && msg.taskId) {
-      const existing = agentStreamBuffers.get(msg.agentId)
+      const bufferKey = `${msg.agentId}:${msg.taskId}`
+      const existing = agentStreamBuffers.get(bufferKey)
       if (existing) {
         // Buffer already had some chunks (race condition) — patch the taskId
         existing.taskId = msg.taskId
       } else {
-        agentStreamBuffers.set(msg.agentId, { content: '', taskId: msg.taskId })
+        agentStreamBuffers.set(bufferKey, { content: '', taskId: msg.taskId, createdAt: Date.now() })
       }
     }
   })
@@ -167,6 +182,13 @@ if (ext.isWebview.value) {
     )
   })
 
+  // Listen for notification actions from extension host (e.g. user clicked "Show Task" on VS Code notification)
+  ext.onMessage('notification-action', (msg) => {
+    if (msg.action === 'show-task' && msg.taskId) {
+      board.selectTask(msg.taskId)
+    }
+  })
+
   ext.sendReady()
 } else {
   // Standalone browser mode: restore from localStorage if available
@@ -193,7 +215,7 @@ board.onTaskMoved((taskId, fromStage, toStage, task, triggeredBy) => {
     const branchTaskTypes = ['feature', 'bugfix', 'infra']
     if (triggeredBy === 'agent' && fromStage === wf.firstStage.value && !task.branch && branchTaskTypes.includes(task.taskType)) {
       const ws = board.workspaces.value.find((w) => w.id === task.workspaceId)
-      const branchName = board.slugifyBranchName(task.title)
+      const branchName = board.slugifyBranchName(task.title, 'feature', taskId)
 
       if (ext.isWebview.value && ws?.localPath) {
         ext.createBranch(taskId, ws.localPath, branchName)
@@ -243,7 +265,12 @@ function parseAgentDecision(content: string): AgentDecision | null {
     if (match) {
       try {
         const parsed = JSON.parse(match[1])
-        if (parsed.action && typeof parsed.action === 'string') {
+        const VALID_ACTIONS = new Set([
+          'implement', 'needs-clarification', 'move-to-review',
+          'approve', 'request-changes', 'ready-for-implementation',
+          'discuss', 'ask-help', 'escalate',
+        ])
+        if (parsed.action && typeof parsed.action === 'string' && VALID_ACTIONS.has(parsed.action)) {
           return {
             action: parsed.action,
             reason: parsed.reason || '',
@@ -453,7 +480,7 @@ function executeConfirmedDecision(pd: PendingDecision) {
       break
     }
     case 'request-changes': {
-      board.addComment(pd.taskId, `🔄 **Changes requested:**\n\n_${pd.decision.reason}_${pd.decision.questions?.length ? `\n\nPunkte:\n${pd.decision.questions.map(q => `- ${q}`).join('\n')}` : ''}`, pd.agentId)
+      board.addComment(pd.taskId, `🔄 **Changes requested:**\n\n_${pd.decision.reason}_${pd.decision.questions?.length ? `\n\nIssues:\n${pd.decision.questions.map(q => `- ${q}`).join('\n')}` : ''}`, pd.agentId)
       if (task.metrics?.feedbackLoops) task.metrics.feedbackLoops.reviewToDev++
       // Notify on loop escalation
       if (task.metrics?.feedbackLoops) {
@@ -561,6 +588,7 @@ function notifyHumanAttention(task: { id: string; title: string }, type: string)
       title: '🔔 Agent Board — Action Required',
       body: `"${task.title}" needs your attention: ${type}`,
       severity: 'warning',
+      taskId: task.id,
     })
   }
 
@@ -579,9 +607,10 @@ function notifyHumanAttention(task: { id: string; title: string }, type: string)
   }
 }
 
-// Expose executeConfirmedDecision for use in components
-;(window as any).__agentBoard_executeConfirmedDecision = executeConfirmedDecision
-;(window as any).__agentBoard_notifyHumanAttention = notifyHumanAttention
+// Register HITL callbacks via composable (replaces window globals)
+const hitl = useHITL()
+hitl.registerDecisionExecutor(executeConfirmedDecision)
+hitl.registerAttentionNotifier(notifyHumanAttention)
 
 // ─── Decision instruction appended to agent prompts ─────────
 
