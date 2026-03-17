@@ -74,6 +74,7 @@ export class CliAgentService {
     return new Promise<CliRunResult>((resolve, reject) => {
       let stdout = ''
       let stderr = ''
+      const MAX_BUFFER = 512 * 1024 // 512KB cap per stream
 
       const proc = spawn(this.cliCommand, args, {
         cwd: workspacePath,
@@ -86,12 +87,14 @@ export class CliAgentService {
       proc.stdout?.on('data', (data: Buffer) => {
         const chunk = data.toString()
         stdout += chunk
+        if (stdout.length > MAX_BUFFER) stdout = stdout.slice(-MAX_BUFFER)
         onStdout?.(chunk)
       })
 
       proc.stderr?.on('data', (data: Buffer) => {
         const chunk = data.toString()
         stderr += chunk
+        if (stderr.length > MAX_BUFFER) stderr = stderr.slice(-MAX_BUFFER)
         onStderr?.(chunk)
       })
 

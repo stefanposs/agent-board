@@ -175,7 +175,7 @@ export type WebviewMessage =
   | { type: 'set-default-backend'; backendId: string }
   | { type: 'set-agent-backend'; agentId: string; backendId: string }
   | { type: 'confirm-decision'; taskId: string; decisionId: string; approved: boolean; feedback?: string }
-  | { type: 'show-notification'; title: string; body: string; severity: 'info' | 'warning' | 'error' }
+  | { type: 'show-notification'; title: string; body: string; severity: 'info' | 'warning' | 'error'; taskId?: string }
   | { type: 'set-board-type'; boardType: string }
   | { type: 'webview-log'; message: string }
   | { type: 'delete-task'; taskId: string }

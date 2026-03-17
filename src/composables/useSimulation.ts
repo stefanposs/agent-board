@@ -177,6 +177,32 @@ export function startAgents() {
     delay += 300 // Stagger by 300ms to avoid overwhelming the LLM API
   }
   board.addToast(`🚀 Dispatching ${orderedAgents.length} agents (${assignedAgents.length} assigned)`, 'success')
+
+  // Watchdog: auto-recover agents stuck in 'working' for more than 5 minutes
+  const AGENT_TIMEOUT_MS = 5 * 60 * 1000
+  const agentWorkStartTimes = new Map<string, number>()
+
+  const watchdogInterval = setInterval(() => {
+    if (!board.simulationRunning.value) return
+    const now = Date.now()
+    for (const agent of board.agents.value) {
+      if (agent.status === 'working') {
+        const started = agentWorkStartTimes.get(agent.id)
+        if (!started) {
+          agentWorkStartTimes.set(agent.id, now)
+        } else if (now - started > AGENT_TIMEOUT_MS) {
+          logToHost(ext, `⏰ Watchdog: "${agent.name}" stuck in working for >5min — resetting to idle`)
+          board.updateAgentStatus(agent.id, 'idle', null)
+          board.addToast(`⏰ ${agent.name} timed out — reset to idle`, 'warning')
+          board.addActivity(`⏰ **${agent.name}** watchdog timeout — auto-recovered`, 'system')
+          agentWorkStartTimes.delete(agent.id)
+        }
+      } else {
+        agentWorkStartTimes.delete(agent.id)
+      }
+    }
+  }, 30_000)
+  simulationIntervals.push(watchdogInterval)
 }
 
 export function stopAgents() {

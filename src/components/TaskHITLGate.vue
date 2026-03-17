@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useBoard } from '../composables/useBoard'
 import { useExtension } from '../composables/useExtension'
+import { useHITL } from '../composables/useHITL'
 import { debouncedSave } from '../composables/usePersistence'
 import type { PendingDecision } from '../domain/types'
 
@@ -12,6 +13,7 @@ const props = defineProps<{
 const board = useBoard()
 const { tasks, getAgent, confirmDecision, rejectDecision } = board
 const ext = useExtension()
+const { executeConfirmedDecision } = useHITL()
 
 const task = computed(() => tasks.value.find(t => t.id === props.taskId))
 const pd = computed(() => task.value?.pendingDecision)
@@ -62,9 +64,10 @@ function handleApprove() {
       approved: true,
       feedback: feedbackText.value || undefined,
     })
-    // Execute the confirmed decision via the global handler
-    const exec = (window as any).__agentBoard_executeConfirmedDecision
-    if (exec) exec(result)
+    // Execute the confirmed decision via the HITL composable
+    if (executeConfirmedDecision.value && result) {
+      executeConfirmedDecision.value(result)
+    }
   }
   feedbackText.value = ''
   showFeedback.value = false

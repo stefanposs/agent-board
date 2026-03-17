@@ -97,7 +97,7 @@ function onDrop(stageId: string) {
           </div>
           <div class="onboarding-step">
             <span class="step-number">2</span>
-            <span>Drag it forward — AI agents automatically pick it up</span>
+            <span>Press <strong>Start</strong> to activate agents — they work through your pipeline automatically</span>
           </div>
           <div class="onboarding-step">
             <span class="step-number">3</span>

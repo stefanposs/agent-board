@@ -317,7 +317,7 @@ export class WebviewProvider {
           result = await vscode.window.showInformationMessage(`${msg.title}: ${msg.body}`, ...actions)
         }
         if (result === 'Show Task') {
-          this.post({ type: 'notification-action', action: 'show-task' })
+          this.post({ type: 'notification-action', action: 'show-task', taskId: msg.taskId })
         }
         return
       }
@@ -821,10 +821,9 @@ export function hello() {
 
       for (const file of files) {
         const abs = path.resolve(workspacePath, file.path)
-        // Security: ensure resolved path is inside workspace (case-insensitive for macOS/Windows)
-        const normalizedAbs = abs.toLowerCase()
-        const normalizedWs = workspacePath.toLowerCase()
-        if (!normalizedAbs.startsWith(normalizedWs + path.sep) && normalizedAbs !== normalizedWs) {
+        // Security: ensure resolved path is inside workspace
+        const rel = path.relative(workspacePath, abs)
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
           this.logError(`    ❌ BLOCKED: "${file.path}" resolves outside workspace (${abs})`)
           continue
         }

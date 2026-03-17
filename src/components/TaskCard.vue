@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import type { Task } from '../domain'
 import { MAX_FEEDBACK_LOOPS } from '../domain'
 import { useBoard } from '../composables/useBoard'
 import { useExtension } from '../composables/useExtension'
+import { useWorkflow } from '../composables/useWorkflow'
 
 const props = defineProps<{
   task: Task
@@ -15,10 +16,12 @@ const emit = defineEmits<{
   dragend: []
 }>()
 
-const { selectTask, getAgent, getWorkspace, getTaskSessions, agents, openAgentPanel, updateAgentStatus } = useBoard()
+const { selectTask, getAgent, getWorkspace, getTaskSessions, agents, openAgentPanel, updateAgentStatus, moveTask } = useBoard()
 const ext = useExtension()
+const wf = useWorkflow()
 const sessionCount = computed(() => getTaskSessions(props.task.id).length)
 const commentCount = computed(() => props.task.comments?.length || 0)
+const showMoveMenu = ref(false)
 
 /** True when any agent is actively working on this task */
 const isAgentWorking = computed(() =>
@@ -87,6 +90,26 @@ function onStopAgent(e: Event) {
 function onGiveInput(e: Event) {
   e.stopPropagation()
   selectTask(props.task.id)
+}
+
+/** Valid transitions for the "Move to..." keyboard-accessible menu */
+const moveTargets = computed(() =>
+  wf.getValidTransitions(props.task.stage).map(t => ({
+    stageId: t.to,
+    label: wf.getStageConfig(t.to)?.label ?? t.to,
+    icon: wf.getStageConfig(t.to)?.icon ?? '📌',
+  }))
+)
+
+function onMoveToStage(stageId: string, e: Event) {
+  e.stopPropagation()
+  moveTask(props.task.id, stageId, 'human')
+  showMoveMenu.value = false
+}
+
+function toggleMoveMenu(e: Event) {
+  e.stopPropagation()
+  showMoveMenu.value = !showMoveMenu.value
 }
 </script>
 
@@ -229,6 +252,33 @@ function onGiveInput(e: Event) {
       >
         💬
       </button>
+      <button
+        v-if="moveTargets.length > 0"
+        class="card-action-btn action-move"
+        title="Move to…"
+        aria-label="Move task to another stage"
+        aria-haspopup="true"
+        :aria-expanded="showMoveMenu"
+        @click="toggleMoveMenu"
+        @keydown.escape="showMoveMenu = false"
+      >
+        ➡️
+      </button>
+    </div>
+
+    <!-- Keyboard-accessible "Move to..." dropdown -->
+    <div v-if="showMoveMenu" class="move-menu" role="menu" @click.stop>
+      <button
+        v-for="target in moveTargets"
+        :key="target.stageId"
+        class="move-menu-item"
+        role="menuitem"
+        @click="onMoveToStage(target.stageId, $event)"
+        @keydown.enter="onMoveToStage(target.stageId, $event)"
+        @keydown.escape="showMoveMenu = false"
+      >
+        {{ target.icon }} {{ target.label }}
+      </button>
     </div>
 
   </div>
@@ -340,6 +390,56 @@ function onGiveInput(e: Event) {
 .action-input:hover {
   background: rgba(59, 130, 246, 0.15);
   border-color: rgba(59, 130, 246, 0.3);
+}
+
+.action-move:hover {
+  background: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* ─── Move-to dropdown ─── */
+.move-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--bg-secondary, #1a1d27);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.move-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary, #e8eaf0);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.move-menu-item:hover,
+.move-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  .task-card.needs-decision,
+  .task-card:has(.card-escalation-badge) {
+    animation: none;
+  }
+  .card-decision-badge,
+  .card-escalation-badge {
+    animation: none;
+  }
 }
 
 /* ─── Feedback Loop Counter ─── */
