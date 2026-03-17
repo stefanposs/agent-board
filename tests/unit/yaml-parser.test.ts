@@ -46,10 +46,10 @@ describe('YAML parsing: basic values', () => {
 
 describe('YAML parsing: structure', () => {
   it('should parse nested key-value pairs', () => {
-    const yaml = 'board:\n  maxTasks: 10\n  defaultPriority: high'
+    const yaml = 'board:\n  maxTasks: 10\n  autoSave: true'
     const r = parse(yaml)
     expect(r.board.maxTasks).toBe(10)
-    expect(r.board.defaultPriority).toBe('high')
+    expect(r.board.autoSave).toBe(true)
   })
 
   it('should parse list items', () => {
@@ -160,7 +160,6 @@ describe('YAML parsing: full board.yaml with workflow', () => {
       '',
       'board:',
       '  maxTasks: 0',
-      '  defaultPriority: medium',
       '  autoSave: true',
       '  autoSaveIntervalMs: 30000',
       '',

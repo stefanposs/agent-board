@@ -120,7 +120,6 @@ export class ClaudeCliBackend implements AgentBackend {
         description: request.prompt,
         stage: 'implementation',
         branch,
-        priority: 'medium',
         tags: [],
         plannerNotes,
         reviewerFeedback: '',

@@ -1,10 +1,33 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useBoard } from '../composables/useBoard'
 import { useExtension } from '../composables/useExtension'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import LogoIcon from './LogoIcon.vue'
-const { workspaces, agents, isExtensionMode, removeWorkspace, addWorkspace, closeSettings } = useBoard()
+const { workspaces, agents, isExtensionMode, removeWorkspace, addWorkspace, closeSettings, showSplashScreen, dismissSplash, boardType } = useBoard()
 const ext = useExtension()
+const overlayRef = ref<HTMLElement | null>(null)
+useFocusTrap(overlayRef)
+
+function handleEscape(e: KeyboardEvent) { if (e.key === 'Escape') closeSettings() }
+onMounted(() => document.addEventListener('keydown', handleEscape))
+onUnmounted(() => document.removeEventListener('keydown', handleEscape))
+
+function toggleSplashSetting(e: Event) {
+  const checked = (e.target as HTMLInputElement).checked
+  if (checked) {
+    showSplashScreen.value = true
+  } else {
+    dismissSplash()
+  }
+}
+
+function switchBoardType(preset: string) {
+  if (preset === boardType.value) return
+  if (ext.isWebview.value) {
+    ext.setBoardType(preset)
+  }
+}
 
 const newPath = ref('')
 const newAgentRepoPath = ref('')
@@ -110,6 +133,17 @@ function openTerminal(localPath: string | undefined) {
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4']
 const ICONS = ['📦', '🔌', '🎨', '🏗️', '⚡', '🔧', '📱']
 
+const STATIC_BACKENDS: Array<{ id: string; label: string; icon: string; available: boolean }> = [
+  { id: 'copilot-lm', label: 'GitHub Copilot', icon: '🤖', available: false },
+  { id: 'claude-cli', label: 'Claude CLI', icon: '⌨️', available: false },
+  { id: 'cline', label: 'Cline', icon: '🔮', available: false },
+]
+
+const displayBackends = computed(() => {
+  if (ext.availableBackends.value.length > 0) return ext.availableBackends.value
+  return STATIC_BACKENDS
+})
+
 const backendDescriptions: Record<string, string> = {
   'copilot-lm': 'VS Code Language Model API — works with any Copilot model',
   'claude-cli': 'Claude Code CLI — full agentic coding with file access',
@@ -149,14 +183,41 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="detail-overlay" @click.self="closeSettings">
+  <div class="detail-overlay" ref="overlayRef" @click.self="closeSettings" role="dialog" aria-modal="true" aria-label="Settings">
     <div class="settings-panel">
       <div class="create-modal-header">
         <h2 class="create-modal-title"><LogoIcon :size="20" class="modal-logo" /> Settings</h2>
-        <button class="detail-close" @click="closeSettings">✕</button>
+        <button class="detail-close" @click="closeSettings" aria-label="Close">✕</button>
       </div>
 
       <div class="settings-body">
+        <!-- ─── Board Type ──────────────────────────────────────── -->
+        <h3 style="font-size: 14px; margin-bottom: 12px;">📋 Board Type</h3>
+        <div class="form-group">
+          <div class="backend-cards">
+            <button
+              class="backend-card"
+              :class="{ selected: boardType === 'software-engineering' }"
+              @click="switchBoardType('software-engineering')"
+            >
+              <span class="backend-icon">💻</span>
+              <span class="backend-name">Software Engineering</span>
+              <span class="backend-desc">Idea → Planning → Implementation → Review → Merged</span>
+            </button>
+            <button
+              class="backend-card"
+              :class="{ selected: boardType === 'task-board' }"
+              @click="switchBoardType('task-board')"
+            >
+              <span class="backend-icon">📋</span>
+              <span class="backend-name">Task Board</span>
+              <span class="backend-desc">To Do → In Progress → Done</span>
+            </button>
+          </div>
+        </div>
+
+        <hr style="border-color: var(--border-color); margin: 20px 0;" />
+
         <!-- Add path input -->
         <div class="form-group">
           <label class="form-label">Add Repos Folder</label>
@@ -239,7 +300,7 @@ onMounted(() => {
               <span class="backend-desc">Best available</span>
             </button>
             <button
-              v-for="b in ext.availableBackends.value"
+              v-for="b in displayBackends"
               :key="b.id"
               class="backend-card"
               :class="{ selected: ext.defaultBackend.value === b.id, unavailable: !b.available }"
@@ -256,7 +317,7 @@ onMounted(() => {
           <span class="form-hint">
             Auto mode picks the best available backend for each agent role.
           </span>
-          <button class="btn btn-sm" style="margin-top: 8px;" @click="refreshBackends" :disabled="isDetecting">
+          <button v-if="isExtensionMode" class="btn btn-sm" style="margin-top: 8px;" @click="refreshBackends" :disabled="isDetecting">
             {{ isDetecting ? '⏳ Detecting…' : '🔍 Re-detect' }}
           </button>
         </div>
@@ -317,12 +378,23 @@ onMounted(() => {
               <span class="ws-row-name">{{ agent.name }}</span>
               <span class="ws-row-repo">{{ agent.role }} · {{ agent.model || '—' }}</span>
             </div>
-            <div class="agent-backend-badge" v-if="ext.availableBackends.value.length > 0">
+            <div class="agent-backend-badge" v-if="displayBackends.length > 0">
               <span class="backend-badge" :title="'Backend: ' + (agent.backend || ext.defaultBackend.value)">
                 {{ getBackendBadge(agent.backend || ext.defaultBackend.value) }}
               </span>
             </div>
           </div>
+        </div>
+
+        <!-- ─── Display Settings ────────────────────────────────── -->
+        <hr style="border-color: var(--border-color); margin: 20px 0;" />
+        <h3 style="font-size: 14px; margin-bottom: 12px;">🎨 Display</h3>
+
+        <div class="form-group">
+          <label class="goal-checkbox-label">
+            <input type="checkbox" :checked="showSplashScreen" @change="toggleSplashSetting" />
+            <span>Show splash screen on startup</span>
+          </label>
         </div>
       </div>
     </div>

@@ -24,12 +24,12 @@ export interface BoardSettings {
   board: {
     /** Max tasks to display in the board view (0 = unlimited). */
     maxTasks: number
-    /** Default priority for new tasks. */
-    defaultPriority: 'low' | 'medium' | 'high' | 'critical'
     /** Auto-save state to markdown files. */
     autoSave: boolean
     /** Auto-save interval in milliseconds. */
     autoSaveIntervalMs: number
+    /** Show splash screen on start. */
+    showSplashOnStart: boolean
   }
 
   /** Developer agent settings. */
@@ -57,6 +57,9 @@ export interface BoardSettings {
     }
   }
 
+  /** Board type preset identifier (e.g. 'software-engineering', 'task-board'). */
+  boardType?: string
+
   /** Configurable workflow state machine (optional — defaults to dev pipeline). */
   workflow?: WorkflowConfig
 }
@@ -72,9 +75,9 @@ const DEFAULTS: BoardSettings = {
   },
   board: {
     maxTasks: 0,
-    defaultPriority: 'medium',
     autoSave: true,
     autoSaveIntervalMs: 30_000,
+    showSplashOnStart: true,
   },
   developer: {
     executionMode: 'cli',
@@ -135,9 +138,15 @@ function toYaml(settings: BoardSettings): string {
   lines.push('# Board display settings.')
   lines.push('board:')
   lines.push(`  maxTasks: ${settings.board.maxTasks}          # 0 = unlimited`)
-  lines.push(`  defaultPriority: ${settings.board.defaultPriority}`)
   lines.push(`  autoSave: ${settings.board.autoSave}`)
   lines.push(`  autoSaveIntervalMs: ${settings.board.autoSaveIntervalMs}`)
+
+  // Board type preset
+  if (settings.boardType) {
+    lines.push('')
+    lines.push('# Board type preset: software-engineering, task-board')
+    lines.push(`boardType: ${settings.boardType}`)
+  }
 
   lines.push('')
   lines.push('# Developer agent settings.')
@@ -289,13 +298,15 @@ export class BoardSettingsManager {
         maxTasks: typeof parsed.board.maxTasks === 'number'
           ? parsed.board.maxTasks
           : DEFAULTS.board.maxTasks,
-        defaultPriority: parsed.board.defaultPriority ?? DEFAULTS.board.defaultPriority,
         autoSave: typeof parsed.board.autoSave === 'boolean'
           ? parsed.board.autoSave
           : DEFAULTS.board.autoSave,
         autoSaveIntervalMs: typeof parsed.board.autoSaveIntervalMs === 'number'
           ? parsed.board.autoSaveIntervalMs
           : DEFAULTS.board.autoSaveIntervalMs,
+        showSplashOnStart: typeof parsed.board.showSplashOnStart === 'boolean'
+          ? parsed.board.showSplashOnStart
+          : DEFAULTS.board.showSplashOnStart,
       }
     }
 
@@ -335,6 +346,11 @@ export class BoardSettingsManager {
             : DEFAULTS.backends.claudeCli.args,
         },
       }
+    }
+
+    // Board type
+    if (typeof parsed.boardType === 'string' && parsed.boardType) {
+      s.boardType = parsed.boardType
     }
 
     // Workflow (state machine)

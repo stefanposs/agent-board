@@ -11,8 +11,34 @@ const { stages } = wf
 const dragOverColumn = ref<string | null>(null)
 const draggedTaskId = ref<string | null>(null)
 
+const searchQuery = ref('')
+
 /** True when the entire board has zero tasks */
 const isBoardEmpty = computed(() => tasks.value.length === 0)
+
+/** True when any filter is active */
+const hasActiveFilter = computed(() => searchQuery.value.trim() !== '')
+
+/** Filtered tasks by stage – applies search filter on top of tasksByStage */
+const filteredTasksByStage = computed(() => {
+  if (!hasActiveFilter.value) return tasksByStage.value
+  const q = searchQuery.value.trim().toLowerCase()
+  const result: Record<string, typeof tasks.value> = {}
+  for (const [stageId, stageTasks] of Object.entries(tasksByStage.value)) {
+    result[stageId] = (stageTasks || []).filter(t => {
+      if (q) {
+        const searchable = `${t.title} ${t.description} ${t.tags.join(' ')} ${t.assignee || ''}`.toLowerCase()
+        if (!searchable.includes(q)) return false
+      }
+      return true
+    })
+  }
+  return result
+})
+
+function clearFilters() {
+  searchQuery.value = ''
+}
 
 function onDragStart(taskId: string) {
   draggedTaskId.value = taskId
@@ -43,6 +69,19 @@ function onDrop(stageId: string) {
 
 <template>
   <div class="board">
+    <!-- Search & Filter Bar -->
+    <div v-if="!isBoardEmpty" class="board-filter-bar">
+      <input
+        v-model="searchQuery"
+        class="board-search-input"
+        type="search"
+        placeholder="🔍 Search tasks…"
+        aria-label="Search tasks"
+      />
+
+      <button v-if="hasActiveFilter" class="btn btn-sm" @click="clearFilters" title="Clear filters">✕ Clear</button>
+    </div>
+
     <!-- Onboarding overlay when board is empty -->
     <div v-if="isBoardEmpty" class="board-onboarding">
       <div class="onboarding-card">
@@ -90,7 +129,7 @@ function onDrop(stageId: string) {
           <span class="column-title" :style="{ color: stage.color }">{{ stage.label }}</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span class="column-count">{{ tasksByStage[stage.id]?.length || 0 }}</span>
+          <span class="column-count">{{ filteredTasksByStage[stage.id]?.length || 0 }}</span>
           <button v-if="stage.isFirst" class="btn-add-task" @click.stop="openCreateModal" title="Create new task">
             +
           </button>
@@ -98,14 +137,14 @@ function onDrop(stageId: string) {
       </div>
       <div class="column-body">
         <TaskCard
-          v-for="task in tasksByStage[stage.id]"
+          v-for="task in filteredTasksByStage[stage.id]"
           :key="task.id"
           :task="task"
           :is-dragging="draggedTaskId === task.id"
           @dragstart="onDragStart(task.id)"
           @dragend="onDragEnd"
         />
-        <div v-if="!tasksByStage[stage.id]?.length" class="empty-column">
+        <div v-if="!filteredTasksByStage[stage.id]?.length" class="empty-column">
           <div class="empty-column-icon">{{ stage.icon }}</div>
           <span v-if="stage.isFirst">Click + to add a task</span>
           <span v-else>No tasks</span>

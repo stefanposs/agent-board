@@ -30,7 +30,7 @@ const activeCount = computed(() => {
     </div>
     <div style="flex: 1;"></div>
     <div class="stat-item" style="color: var(--text-muted);">
-      State Machine: {{ wf.pipelineDescription.value }}
+      Workflow: {{ wf.pipelineDescription.value }}
     </div>
   </div>
 </template>

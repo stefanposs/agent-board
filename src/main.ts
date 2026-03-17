@@ -4,6 +4,7 @@ import './style.css'
 import { useExtension } from './composables/useExtension'
 import { useBoard } from './composables/useBoard'
 import { useWorkflow } from './composables/useWorkflow'
+import { useNotifications } from './composables/useNotifications'
 import { debouncedSave, loadFromLocalStorage, initAutoSave } from './composables/usePersistence'
 import type { AgentDecision, PendingDecision, Agent } from './domain/types'
 import { MAX_FEEDBACK_LOOPS } from './domain/types'
@@ -28,6 +29,9 @@ if (ext.isWebview.value) {
       agents: msg.data.agents,
       persistedTasks: msg.data.persistedTasks,
       persistedSessions: msg.data.persistedSessions,
+      persistedGoals: msg.data.persistedGoals,
+      showSplashOnStart: msg.data.settings?.showSplashOnStart,
+      boardType: msg.data.boardType,
     })
   })
 
@@ -197,7 +201,7 @@ board.onTaskMoved((taskId, fromStage, toStage, task) => {
       } else if (!ext.isWebview.value) {
         // Standalone mode: simulate branch creation
         board.setTaskBranch(taskId, branchName)
-      } else {
+      } else if (task.workspaceId) {
         board.addToast(`⚠️ No local path for workspace "${ws?.name || task.workspaceId}"`, 'warning')
       }
     }
@@ -401,6 +405,20 @@ function executeConfirmedDecision(pd: PendingDecision) {
         board.addComment(pd.taskId, `**🔄 Agent questions:**\n${pd.decision.questions.map(q => `- ${q}`).join('\n')}\n\n_Reason: ${pd.decision.reason}_`, pd.agentId)
       }
       if (task.metrics?.feedbackLoops) task.metrics.feedbackLoops.devToPlanner++
+      // Notify on loop escalation
+      if (task.metrics?.feedbackLoops) {
+        const loops = task.metrics.feedbackLoops.devToPlanner
+        if (loops >= MAX_FEEDBACK_LOOPS - 1) {
+          const { addNotification } = useNotifications()
+          addNotification({
+            type: 'loop-warning',
+            title: `Loop limit approaching: ${task.title}`,
+            message: `Dev→Planner loop ${loops}/${MAX_FEEDBACK_LOOPS} — manual intervention soon required`,
+            taskId: pd.taskId,
+            agentId: pd.agentId,
+          })
+        }
+      }
       if (pd.proposedStage) {
         board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
       }
@@ -435,6 +453,20 @@ function executeConfirmedDecision(pd: PendingDecision) {
     case 'request-changes': {
       board.addComment(pd.taskId, `🔄 **Changes requested:**\n\n_${pd.decision.reason}_${pd.decision.questions?.length ? `\n\nPunkte:\n${pd.decision.questions.map(q => `- ${q}`).join('\n')}` : ''}`, pd.agentId)
       if (task.metrics?.feedbackLoops) task.metrics.feedbackLoops.reviewToDev++
+      // Notify on loop escalation
+      if (task.metrics?.feedbackLoops) {
+        const loops = task.metrics.feedbackLoops.reviewToDev
+        if (loops >= MAX_FEEDBACK_LOOPS - 1) {
+          const { addNotification } = useNotifications()
+          addNotification({
+            type: 'loop-warning',
+            title: `Loop limit approaching: ${task.title}`,
+            message: `Review→Dev loop ${loops}/${MAX_FEEDBACK_LOOPS} — manual intervention soon required`,
+            taskId: pd.taskId,
+            agentId: pd.agentId,
+          })
+        }
+      }
       if (pd.proposedStage) {
         board.moveTask(pd.taskId, pd.proposedStage, 'agent', pd.agentId)
         task.approvalStatus = 'rejected'
@@ -623,7 +655,7 @@ Decision guide:
  */
 function triggerBestAgent(
   taskId: string,
-  task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string },
+  task: { title: string; description?: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string },
   eligibleRoles: string[],
 ) {
   const taskObj = board.tasks.value.find((t) => t.id === taskId)
@@ -677,7 +709,7 @@ function triggerBestAgent(
  * Run the planner agent on a task. Called automatically on move-to-planning,
  * or manually via the "Run Planner" button in TaskDetail.
  */
-function triggerPlannerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }, preselectedAgent?: any) {
+function triggerPlannerAgent(taskId: string, task: { title: string; description?: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }, preselectedAgent?: any) {
   const allAgents = board.agents.value
   const plannerAgent = preselectedAgent || allAgents.find(
     (a) => a.role === 'planner' || a.role === 'architect',
@@ -708,9 +740,9 @@ function triggerPlannerAgent(taskId: string, task: { title: string; description?
   let prompt: string
   if (isReturnFromImpl && devQuestions) {
     // Feedback loop: planner answers developer's questions
-    prompt = `The Developer agent returned this task to planning with questions that need answering.\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nPriority: ${task.priority}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\n--- Developer Questions ---\n${devQuestions}\n\nPlease:\n1. Address each of the developer's questions specifically\n2. Provide concrete answers with code examples where helpful\n3. Update the implementation plan if needed based on the questions\n4. Resolve any ambiguities so the developer can proceed${DECISION_INSTRUCTION_PLANNER}`
+    prompt = `The Developer agent returned this task to planning with questions that need answering.\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\n--- Developer Questions ---\n${devQuestions}\n\nPlease:\n1. Address each of the developer's questions specifically\n2. Provide concrete answers with code examples where helpful\n3. Update the implementation plan if needed based on the questions\n4. Resolve any ambiguities so the developer can proceed${DECISION_INSTRUCTION_PLANNER}`
   } else {
-    prompt = `Analyze and plan the implementation for this task:\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nPriority: ${task.priority}\nTags: ${task.tags.length > 0 ? task.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\nBased on the project context provided, please:\n1. Identify which files/components are relevant to this task\n2. Assess feasibility and complexity\n3. Provide a step-by-step implementation plan\n4. List dependencies and potential risks\n5. Suggest which existing patterns/conventions to follow${DECISION_INSTRUCTION_PLANNER}`
+    prompt = `Analyze and plan the implementation for this task:\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nTags: ${task.tags.length > 0 ? task.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\n\nBased on the project context provided, please:\n1. Identify which files/components are relevant to this task\n2. Assess feasibility and complexity\n3. Provide a step-by-step implementation plan\n4. List dependencies and potential risks\n5. Suggest which existing patterns/conventions to follow${DECISION_INSTRUCTION_PLANNER}`
   }
 
   board.addSessionMessage(session.id, 'user', prompt)
@@ -737,7 +769,7 @@ function triggerPlannerAgent(taskId: string, task: { title: string; description?
  * Run a developer agent on a task entering implementation.
  * Picks the first idle developer (or devops as fallback).
  */
-function triggerDeveloperAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }, preselectedAgent?: any) {
+function triggerDeveloperAgent(taskId: string, task: { title: string; description?: string; tags: string[]; workspaceId: string; assignedAgents: string[]; events?: any[]; branch?: string }, preselectedAgent?: any) {
   const allAgents = board.agents.value
   const devAgent = preselectedAgent ||
     allAgents.find((a) => a.role === 'developer' && a.status === 'idle') ||
@@ -779,7 +811,7 @@ function triggerDeveloperAgent(taskId: string, task: { title: string; descriptio
   if (isReturnFromReview && reviewerFeedback) {
     prompt = `The Reviewer sent this task back with requested changes.\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\nBranch: ${task.branch || '(not set)'}\n\n--- Reviewer Feedback ---\n${reviewerFeedback}\n\n${plannerContext ? `--- Planning Context ---\n${plannerContext}\n\n` : ''}Please:\n1. Address each issue raised by the reviewer\n2. Make the requested changes\n3. Ensure code quality and conventions are maintained${DECISION_INSTRUCTION_DEVELOPER}`
   } else {
-    prompt = `Implement the following task:\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nPriority: ${task.priority}\nTags: ${task.tags.length > 0 ? task.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\nBranch: ${task.branch || '(not set)'}\n\n${plannerContext ? `--- Planning Context ---\n${plannerContext}\n\n` : ''}Please:\n1. Implement the changes described in the planning phase\n2. Follow existing code patterns and conventions\n3. Write clean, well-tested code\n4. Commit your changes with meaningful messages${DECISION_INSTRUCTION_DEVELOPER}`
+    prompt = `Implement the following task:\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nTags: ${task.tags.length > 0 ? task.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\nBranch: ${task.branch || '(not set)'}\n\n${plannerContext ? `--- Planning Context ---\n${plannerContext}\n\n` : ''}Please:\n1. Implement the changes described in the planning phase\n2. Follow existing code patterns and conventions\n3. Write clean, well-tested code\n4. Commit your changes with meaningful messages${DECISION_INSTRUCTION_DEVELOPER}`
   }
 
   board.addSessionMessage(session.id, 'user', prompt)
@@ -804,7 +836,7 @@ function triggerDeveloperAgent(taskId: string, task: { title: string; descriptio
 /**
  * Run a reviewer agent on a task entering review.
  */
-function triggerReviewerAgent(taskId: string, task: { title: string; description?: string; priority: string; tags: string[]; workspaceId: string; assignedAgents: string[]; branch?: string }, preselectedAgent?: any) {
+function triggerReviewerAgent(taskId: string, task: { title: string; description?: string; tags: string[]; workspaceId: string; assignedAgents: string[]; branch?: string }, preselectedAgent?: any) {
   const allAgents = board.agents.value
   const reviewAgent = preselectedAgent ||
     allAgents.find((a) => a.role === 'reviewer' && a.status === 'idle') ||
@@ -827,7 +859,7 @@ function triggerReviewerAgent(taskId: string, task: { title: string; description
     .join('\n\n')
 
   const session = board.getOrCreateSession(taskId, reviewAgent.id)
-  const prompt = `Review the implementation for this task:\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nPriority: ${task.priority}\nTags: ${task.tags.length > 0 ? task.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\nBranch: ${task.branch || '(not set)'}\n\n${implContext ? `--- Implementation Context ---\n${implContext}\n\n` : ''}Please:\n1. Review the code changes for correctness and quality\n2. Check for potential bugs, security issues, and performance concerns\n3. Verify adherence to project conventions and patterns\n4. Provide actionable feedback or approve the changes${DECISION_INSTRUCTION_REVIEWER}`
+  const prompt = `Review the implementation for this task:\n\nTask: "${task.title}"\nDescription: ${task.description || '(no description provided)'}\nTags: ${task.tags.length > 0 ? task.tags.join(', ') : '(none)'}\nWorkspace: ${ws?.name || 'unknown'}${ws?.repo ? ` (${ws.repo})` : ''}\nBranch: ${task.branch || '(not set)'}\n\n${implContext ? `--- Implementation Context ---\n${implContext}\n\n` : ''}Please:\n1. Review the code changes for correctness and quality\n2. Check for potential bugs, security issues, and performance concerns\n3. Verify adherence to project conventions and patterns\n4. Provide actionable feedback or approve the changes${DECISION_INSTRUCTION_REVIEWER}`
 
   board.addSessionMessage(session.id, 'user', prompt)
 

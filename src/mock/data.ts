@@ -1,4 +1,4 @@
-import type { Agent, Comment, Task, Workspace } from '../domain'
+import type { Agent, Comment, Goal, Task, Workspace } from '../domain'
 
 export const MOCK_WORKSPACES: Workspace[] = [
   {
@@ -102,7 +102,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Add WebSocket support',
     description: 'Implement real-time event streaming via WebSockets for live dashboard updates.',
     stage: 'idea',
-    priority: 'medium',
     workspaceId: 'ws-1',
     assignedAgents: [],
     approvalStatus: 'none',
@@ -116,13 +115,13 @@ export const MOCK_TASKS: Task[] = [
     progress: 0,
     requiredSkills: ['api-design', 'full-stack'],
     comments: [],
+    goalIds: ['goal-1'],
   },
   {
     id: 'task-2',
     title: 'Dark mode toggle',
     description: 'Add dark/light theme preference with system default detection.',
     stage: 'idea',
-    priority: 'low',
     workspaceId: 'ws-3',
     assignedAgents: [],
     approvalStatus: 'none',
@@ -144,7 +143,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Metadata API v2',
     description: 'Redesign the metadata API with proper pagination, filtering, and OpenAPI spec.',
     stage: 'planning',
-    priority: 'high',
     workspaceId: 'ws-1',
     assignee: 'agent-planner',
     assignedAgents: ['agent-planner', 'agent-architect'],
@@ -165,13 +163,13 @@ export const MOCK_TASKS: Task[] = [
       { id: 'c1', taskId: 'task-3', content: 'Sollten wir Cursor-based Pagination verwenden statt Offset? Bessere Performance bei großen Datasets.', author: 'user', timestamp: now - 9 * hour },
       { id: 'c2', taskId: 'task-3', content: 'Architect empfiehlt OpenAPI 3.1 mit JSON Schema $ref für shared types.', author: 'agent-architect', timestamp: now - 8 * hour },
     ],
+    goalIds: ['goal-1'],
   },
   {
     id: 'task-4',
     title: 'Terraform state migration',
     description: 'Migrate Terraform state from local backend to GCS with locking.',
     stage: 'planning',
-    priority: 'critical',
     workspaceId: 'ws-2',
     assignee: 'agent-planner',
     assignedAgents: ['agent-planner'],
@@ -195,7 +193,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'User auth refactor',
     description: 'Replace custom JWT handling with standardized OAuth2/OIDC flow using Keycloak.',
     stage: 'implementation',
-    priority: 'high',
     workspaceId: 'ws-1',
     assignee: 'agent-dev',
     assignedAgents: ['agent-dev'],
@@ -228,13 +225,13 @@ export const MOCK_TASKS: Task[] = [
       changedFiles: 23,
       checks: { passed: 8, total: 12 },
     },
+    goalIds: ['goal-1'],
   },
   {
     id: 'task-6',
     title: 'CI pipeline optimization',
     description: 'Reduce build time from 12min to <5min by parallelizing test stages.',
     stage: 'implementation',
-    priority: 'medium',
     workspaceId: 'ws-2',
     assignee: 'agent-devops',
     assignedAgents: ['agent-devops'],
@@ -251,6 +248,7 @@ export const MOCK_TASKS: Task[] = [
     requiredSkills: ['ci-cd', 'docker', 'performance'],
     branch: 'improve/ci-parallel-stages',
     comments: [],
+    goalIds: ['goal-2'],
     pullRequest: {
       number: 89,
       title: 'ci: parallelize test stages for faster builds',
@@ -267,7 +265,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Component library setup',
     description: 'Initialize shared Storybook component library with design tokens.',
     stage: 'implementation',
-    priority: 'medium',
     workspaceId: 'ws-3',
     assignee: 'agent-dev',
     assignedAgents: ['agent-dev'],
@@ -291,7 +288,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Rate limiting middleware',
     description: 'Add per-tenant rate limiting with Redis sliding window counters.',
     stage: 'review',
-    priority: 'high',
     workspaceId: 'ws-1',
     assignee: 'agent-reviewer',
     assignedAgents: ['agent-reviewer'],
@@ -314,6 +310,7 @@ export const MOCK_TASKS: Task[] = [
       { id: 'c6', taskId: 'task-8', content: 'Sollen wir Token Bucket oder Sliding Window verwenden? Token Bucket ist einfacher, Sliding Window genauer.', author: 'user', timestamp: now - 6 * hour },
       { id: 'c7', taskId: 'task-8', content: 'Sliding Window gewählt. Redis ZRANGEBYSCORE mit TTL-basierten Scores.', author: 'agent-reviewer', timestamp: now - 4 * hour },
     ],
+    goalIds: ['goal-1'],
     pullRequest: {
       number: 138,
       title: 'feat: per-tenant rate limiting with Redis sliding window',
@@ -330,7 +327,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'VPC peering config',
     description: 'Set up VPC peering between production and staging environments.',
     stage: 'review',
-    priority: 'critical',
     workspaceId: 'ws-2',
     assignee: 'agent-devops',
     assignedAgents: ['agent-reviewer', 'agent-devops'],
@@ -365,7 +361,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Health check endpoint',
     description: 'Add /health and /ready endpoints with dependency checks.',
     stage: 'merge',
-    priority: 'medium',
     workspaceId: 'ws-1',
     assignedAgents: [],
     approvalStatus: 'approved',
@@ -397,7 +392,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Logging standardization',
     description: 'Adopt structured JSON logging across all services.',
     stage: 'merge',
-    priority: 'medium',
     workspaceId: 'ws-1',
     assignedAgents: [],
     approvalStatus: 'approved',
@@ -427,7 +421,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Navigation redesign',
     description: 'Implement new sidebar navigation with workspace switcher.',
     stage: 'merge',
-    priority: 'high',
     workspaceId: 'ws-3',
     assignedAgents: [],
     approvalStatus: 'approved',
@@ -458,7 +451,6 @@ export const MOCK_TASKS: Task[] = [
     title: 'Database migration v3',
     description: 'Migrate from PostgreSQL 14 to 16 with zero-downtime schema changes.',
     stage: 'implementation',
-    priority: 'critical',
     workspaceId: 'ws-1',
     assignee: 'agent-dev',
     assignedAgents: ['agent-dev', 'agent-devops'],
@@ -494,5 +486,30 @@ export const MOCK_TASKS: Task[] = [
       id: 'pd-demo-1',
       timestamp: now - 2 * hour,
     },
+  },
+]
+
+// ─── Mock Goals ─────────────────────────────────────────────────
+
+export const MOCK_GOALS: Goal[] = [
+  {
+    id: 'goal-1',
+    title: 'Platform API v2 Launch',
+    description: 'Ship the redesigned Platform API with OAuth2, rate limiting, and metadata v2.',
+    owner: 'Stefan',
+    deadline: now + 14 * 24 * hour,
+    taskIds: ['task-1', 'task-3', 'task-5', 'task-8'],
+    createdAt: now - 7 * 24 * hour,
+    updatedAt: now - 2 * hour,
+  },
+  {
+    id: 'goal-2',
+    title: 'DevOps Improvements Q1',
+    description: 'Reduce CI build times and migrate Terraform state.',
+    owner: 'Stefan',
+    deadline: now + 30 * 24 * hour,
+    taskIds: ['task-6'],
+    createdAt: now - 5 * 24 * hour,
+    updatedAt: now - 24 * hour,
   },
 ]

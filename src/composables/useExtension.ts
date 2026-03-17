@@ -161,6 +161,10 @@ export function useExtension() {
     post({ type: 'get-llm-models' })
   }
 
+  function openFile(filePath: string) {
+    post({ type: 'open-file', filePath })
+  }
+
   function openFolder(path: string) {
     post({ type: 'open-folder', path })
   }
@@ -177,8 +181,24 @@ export function useExtension() {
     post({ type: 'save-state', tasks, sessions })
   }
 
+  function deleteTask(taskId: string) {
+    post({ type: 'delete-task', taskId })
+  }
+
+  function saveGoals(goals: any[]) {
+    post({ type: 'save-goals', goals })
+  }
+
   function loadState() {
     post({ type: 'load-state' })
+  }
+
+  function generateReport(tasks: any[], goals: any[], prompt?: string) {
+    post({ type: 'generate-report', tasks, goals, prompt })
+  }
+
+  function dismissSplash() {
+    post({ type: 'dismiss-splash' })
   }
 
   function detectBackends() {
@@ -192,6 +212,10 @@ export function useExtension() {
 
   function setAgentBackend(agentId: string, backendId: string) {
     post({ type: 'set-agent-backend', agentId, backendId })
+  }
+
+  function setBoardType(boardType: string) {
+    post({ type: 'set-board-type', boardType })
   }
 
   /** Register a handler for a specific message type. Returns unsubscribe fn. */
@@ -229,14 +253,20 @@ export function useExtension() {
     runAgent,
     stopAgent,
     getModels,
+    openFile,
     openFolder,
     openTerminal,
     createBranch,
     saveState,
+    deleteTask,
+    saveGoals,
     loadState,
+    generateReport,
+    dismissSplash,
     detectBackends,
     setDefaultBackend,
     setAgentBackend,
+    setBoardType,
     onMessage,
   }
 }

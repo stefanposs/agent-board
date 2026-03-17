@@ -38,7 +38,8 @@ export class CliAgentService {
    */
   async isAvailable(): Promise<boolean> {
     try {
-      execFileSync('which', [this.cliCommand], { stdio: 'pipe', encoding: 'utf-8' })
+      const cmd = process.platform === 'win32' ? 'where' : 'which'
+      execFileSync(cmd, [this.cliCommand], { stdio: 'pipe', encoding: 'utf-8' })
       return true
     } catch {
       return false
@@ -145,7 +146,6 @@ export class CliAgentService {
       description: string
       stage: string
       branch?: string
-      priority: string
       tags: string[]
       requiredSkills?: string[]
       plannerNotes: string
@@ -176,7 +176,6 @@ export class CliAgentService {
     sections.push(`| ID | ${taskId} |`)
     sections.push(`| Status | ${data.stage} |`)
     sections.push(`| Branch | ${data.branch || '(none)'} |`)
-    sections.push(`| Priority | ${data.priority} |`)
     sections.push(`| Tags | ${data.tags.join(', ') || '(none)'} |`)
     if (data.requiredSkills && data.requiredSkills.length > 0) {
       sections.push(`| Required Skills | ${data.requiredSkills.join(', ')} |`)
