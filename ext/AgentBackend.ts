@@ -196,12 +196,14 @@ export class ClineBackend implements AgentBackend {
         callbacks.onOutput(`✅ Task sent to Cline as a new task.\n\nCheck the Cline panel for progress.\n`)
         callbacks.onLog('Task delegated to Cline via cline.newTask command')
       } catch (e) {
-        // Last resort: copy prompt to clipboard and open Cline
+        // Last resort: copy prompt to clipboard and notify user
         try {
           await vscode.env.clipboard.writeText(taskPrompt)
-          await vscode.commands.executeCommand('cline.openInNewTab')
-          callbacks.onOutput(`📋 Prompt copied to clipboard. Cline panel opened.\n\nPaste the prompt into Cline to start the task.\n`)
-          callbacks.onLog('Copied prompt to clipboard and opened Cline panel')
+          vscode.window.showInformationMessage('Cline command failed. Task prompt copied to clipboard. Open Cline and paste.', 'Open Cline').then(sel => {
+            if (sel === 'Open Cline') vscode.commands.executeCommand('workbench.view.extension.cline')
+          })
+          callbacks.onOutput(`📋 Prompt copied to clipboard. Open Cline and paste to start the task.\n`)
+          callbacks.onLog('Copied prompt to clipboard — Cline commands unavailable')
         } catch (e2) {
           throw new Error(`Could not communicate with Cline extension: ${e2}`)
         }

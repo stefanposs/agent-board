@@ -189,9 +189,9 @@ board.onTaskMoved((taskId, fromStage, toStage, task) => {
     const toLabel = wf.getStageConfig(toStage)?.label ?? toStage
     board.addToast(`⚙️ ${task.title}: ${fromStage} → ${toLabel}`, 'info')
 
-    // Auto-create branch when leaving first stage (only for code-related task types)
+    // Auto-create branch when leaving first stage (only when simulation active + code-related task types)
     const branchTaskTypes = ['feature', 'bugfix', 'infra']
-    if (fromStage === wf.firstStage.value && !task.branch && branchTaskTypes.includes(task.taskType)) {
+    if (board.simulationRunning.value && fromStage === wf.firstStage.value && !task.branch && branchTaskTypes.includes(task.taskType)) {
       const ws = board.workspaces.value.find((w) => w.id === task.workspaceId)
       const branchName = board.slugifyBranchName(task.title)
 
@@ -206,13 +206,15 @@ board.onTaskMoved((taskId, fromStage, toStage, task) => {
       }
     }
 
-    // Workflow-driven agent triggering: find which roles should run for this stage
-    const eligibleRoles = wf.getAgentRolesForStage(toStage)
-    if (eligibleRoles.length > 0 && !wf.isFinalStage(toStage)) {
-      try {
-        triggerBestAgent(taskId, task, eligibleRoles)
-      } catch (err) {
-        board.addToast(`❌ Agent trigger error: ${err instanceof Error ? err.message : String(err)}`, 'error')
+    // Workflow-driven agent triggering: only when simulation is active (user clicked Start)
+    if (board.simulationRunning.value) {
+      const eligibleRoles = wf.getAgentRolesForStage(toStage)
+      if (eligibleRoles.length > 0 && !wf.isFinalStage(toStage)) {
+        try {
+          triggerBestAgent(taskId, task, eligibleRoles)
+        } catch (err) {
+          board.addToast(`❌ Agent trigger error: ${err instanceof Error ? err.message : String(err)}`, 'error')
+        }
       }
     }
 

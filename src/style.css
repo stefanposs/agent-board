@@ -427,6 +427,13 @@ body {
 .board-search-input:focus {
   border-color: var(--accent-blue);
 }
+@media (max-width: 768px) {
+  .board-search-input {
+    max-width: 150px;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+}
 .board-filter-select {
   padding: 6px 8px;
   font-size: 13px;
