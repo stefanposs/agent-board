@@ -33,7 +33,7 @@ const selectedGoalId = ref<string | null>(null)
 const boardType = ref('software-engineering')
 
 // ─── Task Move Callbacks ────────────────────────────────────────
-type TaskMoveCallback = (taskId: string, fromStage: string, toStage: string, task: Task) => void
+type TaskMoveCallback = (taskId: string, fromStage: string, toStage: string, task: Task, triggeredBy: 'agent' | 'human') => void
 const taskMoveCallbacks: TaskMoveCallback[] = []
 
 // ─── Computed ───────────────────────────────────────────────────
@@ -145,7 +145,7 @@ function useBoard() {
 
     // Fire callbacks (branch creation, agent triggering, etc.)
     for (const cb of taskMoveCallbacks) {
-      try { cb(taskId, fromStage, toStage, task) } catch (e) {
+      try { cb(taskId, fromStage, toStage, task, triggeredBy) } catch (e) {
         console.error('[AgentBoard] onTaskMoved callback error:', e)
       }
     }

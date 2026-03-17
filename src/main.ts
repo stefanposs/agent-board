@@ -183,15 +183,15 @@ if (ext.isWebview.value) {
 
 // ─── Auto-branch + Auto-agent on task move ──────────────────
 
-board.onTaskMoved((taskId, fromStage, toStage, task) => {
+board.onTaskMoved((taskId, fromStage, toStage, task, triggeredBy) => {
 
   try {
     const toLabel = wf.getStageConfig(toStage)?.label ?? toStage
     board.addToast(`⚙️ ${task.title}: ${fromStage} → ${toLabel}`, 'info')
 
-    // Auto-create branch when leaving first stage (only when simulation active + code-related task types)
+    // Auto-create branch when leaving first stage (only on agent-triggered moves + code-related task types)
     const branchTaskTypes = ['feature', 'bugfix', 'infra']
-    if (board.simulationRunning.value && fromStage === wf.firstStage.value && !task.branch && branchTaskTypes.includes(task.taskType)) {
+    if (triggeredBy === 'agent' && fromStage === wf.firstStage.value && !task.branch && branchTaskTypes.includes(task.taskType)) {
       const ws = board.workspaces.value.find((w) => w.id === task.workspaceId)
       const branchName = board.slugifyBranchName(task.title)
 
@@ -206,8 +206,8 @@ board.onTaskMoved((taskId, fromStage, toStage, task) => {
       }
     }
 
-    // Workflow-driven agent triggering: only when simulation is active (user clicked Start)
-    if (board.simulationRunning.value) {
+    // Workflow-driven agent triggering: only when an agent moves a task (agent-to-agent handoff)
+    if (triggeredBy === 'agent') {
       const eligibleRoles = wf.getAgentRolesForStage(toStage)
       if (eligibleRoles.length > 0 && !wf.isFinalStage(toStage)) {
         try {
